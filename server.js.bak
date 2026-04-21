@@ -1,0 +1,672 @@
+// Monkey Maddness — Authoritative game server
+// Serves static files over HTTP, runs WebSocket for multiplayer
+
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
+const { WebSocketServer } = require('ws');
+
+const PORT = parseInt(process.env.PORT, 10) || 8080;
+
+// ─── Seeded PRNG (mulberry32) ────────────────────────────────────────────────
+function mulberry32(seed) {
+  return function () {
+    seed |= 0;
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ─── City generation (must match client exactly) ─────────────────────────────
+const LOGICAL_W = 640;
+const LOGICAL_H = 480;
+
+function generateCity(seed) {
+  const rng = mulberry32(seed);
+  const numBuildings = Math.floor(rng() * 5) + 8; // 8-12
+  const buildings = [];
+  let x = 0;
+  const buildingWidth = LOGICAL_W / numBuildings;
+  const colors = ['#55FFFF', '#FF55FF', '#AAAAAA'];
+
+  for (let i = 0; i < numBuildings; i++) {
+    const w = Math.floor(buildingWidth);
+    const h = Math.floor(rng() * 200) + 80; // 80-280
+    const color = colors[Math.floor(rng() * colors.length)];
+    buildings.push({ x, w, h, y: LOGICAL_H - h, color });
+    x += w;
+  }
+  return buildings;
+}
+
+function placeGorillas(buildings, rng) {
+  const GORILLA_W = 28;
+  const GORILLA_H = 28;
+  // Pick two non-adjacent buildings, one in left half, one in right half
+  const mid = Math.floor(buildings.length / 2);
+  const leftIdx = Math.floor(rng() * mid);
+  const rightIdx = mid + Math.floor(rng() * (buildings.length - mid));
+
+  function pos(b) {
+    return {
+      x: Math.floor(b.x + b.w / 2 - GORILLA_W / 2),
+      y: b.y - GORILLA_H
+    };
+  }
+  return [pos(buildings[leftIdx]), pos(buildings[rightIdx])];
+}
+
+// ─── Physics constants ───────────────────────────────────────────────────────
+const EARTH_GRAVITY = 9.8; // m/s² — real Earth gravity, used as base reference
+const GRAVITY_SCALE = 3;   // gameplay multiplier so throws feel right at 640x480
+const BASE_GRAVITY = EARTH_GRAVITY * GRAVITY_SCALE; // 29.4 default
+const SIM_HZ = 60;
+const DT = 1 / SIM_HZ;
+const BROADCAST_HZ = 30;
+const BROADCAST_INTERVAL = Math.round(SIM_HZ / BROADCAST_HZ);
+const GORILLA_W = 28;
+const GORILLA_H = 28;
+const DEFAULT_EXPLOSION_RADIUS = 30;
+const MAX_EXPLOSIONS = 200;
+const SUN_X = LOGICAL_W / 2;
+const SUN_Y = 40;
+const SUN_RADIUS = 30;
+
+// ─── Static file server ─────────────────────────────────────────────────────
+const MIME = {
+  '.html': 'text/html',
+  '.js':   'application/javascript',
+  '.css':  'text/css',
+  '.json': 'application/json',
+};
+
+// Only serve these files — nothing else
+const ALLOWED_FILES = new Set(['index.html', 'game.js', 'net.js', 'styles.css']);
+
+const httpServer = http.createServer((req, res) => {
+  const reqPath = req.url === '/' ? '/index.html' : req.url;
+  const fileName = path.basename(reqPath);
+
+  if (!ALLOWED_FILES.has(fileName)) {
+    res.writeHead(404);
+    res.end('Not found');
+    return;
+  }
+
+  const fullPath = path.join(__dirname, fileName);
+
+  // Belt-and-suspenders: ensure resolved path is within __dirname
+  if (!fullPath.startsWith(__dirname + path.sep) && fullPath !== path.join(__dirname, fileName)) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
+
+  const ext = path.extname(fullPath);
+  const contentType = MIME[ext] || 'application/octet-stream';
+
+  fs.readFile(fullPath, (err, data) => {
+    if (err) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': contentType });
+    res.end(data);
+  });
+});
+
+// ─── WebSocket server ────────────────────────────────────────────────────────
+const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+
+// Match state
+let match = null;
+
+function createMatch() {
+  return {
+    players: [null, null],          // {ws, name, connected}
+    scores: [0, 0],
+    roundsToWin: 3,
+    currentPlayer: 1,               // 1 or 2
+    state: 'waiting',               // waiting | setup | playing | roundEnd | matchOver
+    citySeed: 0,
+    buildings: [],
+    gorillas: [{x:0,y:0},{x:0,y:0}],
+    wind: 0,
+    explosions: [],                  // [{x,y,radius}] for terrain sync
+    banana: null,                    // active banana simulation
+    disconnectTimers: [null, null],
+    setupReady: [false, false],
+    gravityMultiplier: 1,         // applied to BASE_GRAVITY
+    explosionRadius: DEFAULT_EXPLOSION_RADIUS,
+    timeOfDay: 'day',
+  };
+}
+
+match = createMatch();
+
+function broadcast(msg) {
+  const data = JSON.stringify(msg);
+  for (const p of match.players) {
+    if (p && p.connected && p.ws.readyState === 1) {
+      p.ws.send(data);
+    }
+  }
+}
+
+function sendTo(playerIdx, msg) {
+  const p = match.players[playerIdx];
+  if (p && p.connected && p.ws.readyState === 1) {
+    p.ws.send(JSON.stringify(msg));
+  }
+}
+
+function newRound() {
+  match.citySeed = (Math.random() * 0xFFFFFFFF) >>> 0;
+  match.buildings = generateCity(match.citySeed);
+  const rng = mulberry32(match.citySeed + 12345); // offset seed for gorilla placement
+  match.gorillas = placeGorillas(match.buildings, rng);
+  match.wind = (Math.random() * 20 - 10); // -10 to +10
+  match.explosions = [];
+  match.banana = null;
+  match.currentPlayer = 1;
+  match.state = 'playing';
+
+  broadcast({
+    type: 'roundStart',
+    citySeed: match.citySeed,
+    gorillas: match.gorillas,
+    wind: match.wind,
+    currentPlayer: match.currentPlayer,
+    scores: match.scores,
+    timeOfDay: match.timeOfDay,
+    explosionRadius: match.explosionRadius,
+    gravity: match.gravityMultiplier,
+  });
+}
+
+function switchTurn() {
+  match.currentPlayer = match.currentPlayer === 1 ? 2 : 1;
+  broadcast({ type: 'turn', currentPlayer: match.currentPlayer });
+}
+
+// ─── Banana physics simulation ──────────────────────────────────────────────
+function startBanana(playerIdx, angle, velocity) {
+  const gorilla = match.gorillas[playerIdx];
+  // Banana starts above gorilla's raised hand
+  let startX, startY;
+  startX = gorilla.x + GORILLA_W / 2;
+  startY = gorilla.y - 4;
+
+  // Player 1 throws right, Player 2 throws left
+  let angleRad;
+  if (playerIdx === 0) {
+    angleRad = (angle * Math.PI) / 180;
+  } else {
+    angleRad = ((180 - angle) * Math.PI) / 180;
+  }
+
+  const vx = velocity * Math.cos(angleRad);
+  const vy = -velocity * Math.sin(angleRad); // negative because canvas y is down
+
+  match.banana = {
+    x: startX,
+    y: startY,
+    vx,
+    vy,
+    tick: 0,
+    frame: 0,
+    distanceTraveled: 0,
+    sunHitSent: false,
+  };
+
+  // Tell clients about the throw animation
+  broadcast({
+    type: 'throwAnim',
+    player: playerIdx + 1,
+    angle,
+    velocity,
+  });
+
+  // Start simulation after a brief delay for throw animation
+  setTimeout(() => {
+    if (match.banana) {
+      simulateBanana();
+    }
+  }, 300);
+}
+
+function simulateBanana() {
+  if (!match.banana || match.state !== 'playing') return;
+
+  const sim = match.banana;
+  let stepCount = 0;
+  const maxSteps = SIM_HZ * 15; // 15 seconds max flight
+
+  const simInterval = setInterval(() => {
+    if (!match.banana || match.state !== 'playing') {
+      clearInterval(simInterval);
+      return;
+    }
+
+    // Physics step
+    const gravity = BASE_GRAVITY * match.gravityMultiplier;
+    sim.vx += match.wind * 0.05 * DT; // wind as horizontal accel
+    sim.vy += gravity * DT;
+
+    // Sub-step when velocity is high to prevent tunneling through gorillas/terrain
+    const speed = Math.sqrt(sim.vx * sim.vx + sim.vy * sim.vy);
+    const stepDist = speed * DT;
+    const MAX_STEP_PX = 4; // max pixels per sub-step
+    const subSteps = stepDist > MAX_STEP_PX ? Math.ceil(stepDist / MAX_STEP_PX) : 1;
+    const subDT = DT / subSteps;
+
+    for (let sub = 0; sub < subSteps; sub++) {
+      const oldX = sim.x;
+      const oldY = sim.y;
+      sim.x += sim.vx * subDT;
+      sim.y += sim.vy * subDT;
+      sim.distanceTraveled += Math.sqrt((sim.x - oldX) ** 2 + (sim.y - oldY) ** 2);
+
+      // ─── Collision checks (run every sub-step) ───────────────
+      const collisionResult = checkBananaCollision(sim, simInterval, stepCount, maxSteps);
+      if (collisionResult) return; // collision handled, sim cleared
+    }
+
+    sim.frame = Math.floor(sim.distanceTraveled / 15) % 4;
+    sim.tick++;
+    stepCount++;
+
+    // 4. Off-screen (check after all sub-steps)
+    if (sim.x < -50 || sim.x > LOGICAL_W + 50 || sim.y > LOGICAL_H + 50 || stepCount > maxSteps) {
+      clearInterval(simInterval);
+      match.banana = null;
+      broadcast({ type: 'miss' });
+      setTimeout(() => switchTurn(), 500);
+      return;
+    }
+
+    // Broadcast position at BROADCAST_HZ
+    if (sim.tick % BROADCAST_INTERVAL === 0) {
+      broadcast({ type: 'banana', x: sim.x, y: sim.y, frame: sim.frame });
+    }
+  }, 1000 / SIM_HZ);
+}
+
+// Extracted collision check for sub-stepping — returns true if collision handled
+function checkBananaCollision(sim, simInterval, stepCount, maxSteps) {
+    const bx = sim.x;
+    const by = sim.y;
+
+    // 1. Gorilla hit
+    for (let gi = 0; gi < 2; gi++) {
+      const g = match.gorillas[gi];
+      if (bx >= g.x && bx <= g.x + GORILLA_W && by >= g.y && by <= g.y + GORILLA_H) {
+        clearInterval(simInterval);
+        match.banana = null;
+
+        // Explosion at hit point
+        const exp = { x: bx, y: by, radius: match.explosionRadius };
+        match.explosions.push(exp);
+        if (match.explosions.length > MAX_EXPLOSIONS) match.explosions.shift();
+        broadcast({ type: 'explosion', x: exp.x, y: exp.y, radius: exp.radius });
+
+        // Determine winner: if hit opponent, current player wins; if hit self, opponent wins
+        const currentIdx = match.currentPlayer - 1;
+        let winner;
+        if (gi !== currentIdx) {
+          winner = match.currentPlayer;
+        } else {
+          winner = match.currentPlayer === 1 ? 2 : 1;
+        }
+
+        match.scores[winner - 1]++;
+        broadcast({ type: 'gorillaHit', winner, scores: match.scores });
+
+        // Check match over
+        if (match.scores[winner - 1] >= match.roundsToWin) {
+          match.state = 'matchOver';
+          setTimeout(() => {
+            broadcast({
+              type: 'matchOver',
+              winner,
+              finalScores: [...match.scores],
+            });
+          }, 3000); // after victory dance
+        } else {
+          match.state = 'roundEnd';
+          setTimeout(() => newRound(), 3000);
+        }
+        return true;
+      }
+    }
+
+    // 2. Terrain hit — check if banana is within any building rect minus explosion holes
+    if (by >= 0) {
+      let inBuilding = false;
+      for (const b of match.buildings) {
+        if (bx >= b.x && bx <= b.x + b.w && by >= b.y && by <= LOGICAL_H) {
+          inBuilding = true;
+          break;
+        }
+      }
+      if (inBuilding) {
+        // Check if this point has been carved out
+        let carved = false;
+        for (const e of match.explosions) {
+          const dx = bx - e.x;
+          const dy = by - e.y;
+          if (dx * dx + dy * dy <= e.radius * e.radius) {
+            carved = true;
+            break;
+          }
+        }
+        if (!carved) {
+          clearInterval(simInterval);
+          match.banana = null;
+          const exp = { x: bx, y: by, radius: match.explosionRadius };
+          match.explosions.push(exp);
+          if (match.explosions.length > MAX_EXPLOSIONS) match.explosions.shift();
+          broadcast({ type: 'explosion', x: exp.x, y: exp.y, radius: exp.radius });
+
+          // Check if any gorilla is caught in the blast radius
+          let blastHit = -1;
+          for (let gi = 0; gi < 2; gi++) {
+            const g = match.gorillas[gi];
+            const gcx = g.x + GORILLA_W / 2;
+            const gcy = g.y + GORILLA_H / 2;
+            const dx = gcx - exp.x;
+            const dy = gcy - exp.y;
+            if (dx * dx + dy * dy <= exp.radius * exp.radius) {
+              blastHit = gi;
+              break;
+            }
+          }
+
+          if (blastHit >= 0) {
+            const currentIdx = match.currentPlayer - 1;
+            let winner;
+            if (blastHit !== currentIdx) {
+              winner = match.currentPlayer;
+            } else {
+              winner = match.currentPlayer === 1 ? 2 : 1;
+            }
+            match.scores[winner - 1]++;
+            setTimeout(() => {
+              broadcast({ type: 'gorillaHit', winner, scores: match.scores });
+              if (match.scores[winner - 1] >= match.roundsToWin) {
+                match.state = 'matchOver';
+                setTimeout(() => {
+                  broadcast({ type: 'matchOver', winner, finalScores: [...match.scores] });
+                }, 3000);
+              } else {
+                match.state = 'roundEnd';
+                setTimeout(() => newRound(), 3000);
+              }
+            }, 400);
+          } else {
+            setTimeout(() => switchTurn(), 600);
+          }
+          return true;
+        }
+      }
+    }
+
+    // 3. Sun hit
+    {
+      const dx = bx - SUN_X;
+      const dy = by - SUN_Y;
+      if (dx * dx + dy * dy <= SUN_RADIUS * SUN_RADIUS && !sim.sunHitSent) {
+        sim.sunHitSent = true;
+        broadcast({ type: 'sunHit' });
+        // banana continues
+      } else if (dx * dx + dy * dy > SUN_RADIUS * SUN_RADIUS) {
+        sim.sunHitSent = false;
+      }
+    }
+
+    return false; // no collision
+}
+
+// ─── WebSocket connection handling ──────────────────────────────────────────
+wss.on('connection', (ws) => {
+  ws.on('message', (raw) => {
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+      return;
+    }
+
+    // Validate message type
+    if (!msg || typeof msg.type !== 'string') {
+      ws.send(JSON.stringify({ type: 'error', message: 'Missing message type' }));
+      return;
+    }
+
+    switch (msg.type) {
+      case 'join':
+        handleJoin(ws, msg);
+        break;
+      case 'fire':
+        handleFire(ws, msg);
+        break;
+      case 'rematch':
+        handleRematch(ws);
+        break;
+      case 'setSettings':
+        handleSetSettings(ws, msg);
+        break;
+      default:
+        ws.send(JSON.stringify({ type: 'error', message: 'Unknown message type' }));
+    }
+  });
+
+  ws.on('close', () => {
+    handleDisconnect(ws);
+  });
+});
+
+function handleJoin(ws, msg) {
+  const name = (typeof msg.name === 'string' ? msg.name.trim().substring(0, 20) : 'Player') || 'Player';
+
+  // Check for reconnect (only during an active game)
+  if (match.state === 'playing' || match.state === 'roundEnd') {
+    for (let i = 0; i < 2; i++) {
+      const p = match.players[i];
+      if (p && !p.connected && p.name === name && p.token === msg.token) {
+        // Reconnect!
+        p.ws = ws;
+        p.connected = true;
+        if (match.disconnectTimers[i]) {
+          clearTimeout(match.disconnectTimers[i]);
+          match.disconnectTimers[i] = null;
+        }
+        ws.send(JSON.stringify({
+          type: 'assigned',
+          player: i + 1,
+          opponentName: match.players[1 - i]?.name || '',
+          token: p.token,
+        }));
+        // Send current round state for resync
+        ws.send(JSON.stringify({
+          type: 'roundStart',
+          citySeed: match.citySeed,
+          gorillas: match.gorillas,
+          wind: match.wind,
+          currentPlayer: match.currentPlayer,
+          scores: match.scores,
+          timeOfDay: match.timeOfDay,
+          explosionRadius: match.explosionRadius,
+          gravity: match.gravityMultiplier,
+        }));
+        // Send explosion history for terrain reconstruction
+        for (const exp of match.explosions) {
+          ws.send(JSON.stringify({ type: 'explosion', x: exp.x, y: exp.y, radius: exp.radius }));
+        }
+        // Notify opponent
+        sendTo(1 - i, { type: 'opponentReconnected' });
+        return;
+      }
+    }
+  }
+
+  // If match is over or waiting, clear stale slots so new players can join
+  if (match.state === 'matchOver' || match.state === 'waiting') {
+    for (let i = 0; i < 2; i++) {
+      const p = match.players[i];
+      if (p && !p.connected) {
+        if (match.disconnectTimers[i]) {
+          clearTimeout(match.disconnectTimers[i]);
+          match.disconnectTimers[i] = null;
+        }
+        match.players[i] = null;
+      }
+    }
+  }
+
+  // New player
+  let slot = -1;
+  if (!match.players[0] || (!match.players[0].connected && !match.disconnectTimers[0])) {
+    slot = 0;
+  } else if (!match.players[1] || (!match.players[1].connected && !match.disconnectTimers[1])) {
+    slot = 1;
+  }
+
+  if (slot === -1) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Match is full' }));
+    ws.close();
+    return;
+  }
+
+  const token = crypto.randomUUID();
+  match.players[slot] = { ws, name, connected: true, token };
+  ws.send(JSON.stringify({ type: 'waiting', player: slot + 1 }));
+
+  // If both players are connected, start
+  if (match.players[0]?.connected && match.players[1]?.connected) {
+    sendTo(0, {
+      type: 'assigned',
+      player: 1,
+      opponentName: match.players[1].name,
+      token: match.players[0].token,
+    });
+    sendTo(1, {
+      type: 'assigned',
+      player: 2,
+      opponentName: match.players[0].name,
+      token: match.players[1].token,
+    });
+
+    // Start first round after brief delay
+    match.scores = [0, 0];
+    setTimeout(() => newRound(), 1000);
+  }
+}
+
+function handleFire(ws, msg) {
+  if (match.state !== 'playing') return;
+
+  // Determine which player sent this
+  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
+  if (playerIdx === -1) return;
+  if (playerIdx + 1 !== match.currentPlayer) return; // not your turn
+  if (match.banana) return; // already firing
+
+  const angle = Math.max(0, Math.min(90, Number(msg.angle) || 0));
+  const velocity = Math.max(0, Math.min(200, Number(msg.velocity) || 0));
+
+  startBanana(playerIdx, angle, velocity);
+}
+
+function handleRematch(ws) {
+  if (match.state !== 'matchOver') return;
+  // Validate both players are connected
+  if (!match.players[0]?.connected || !match.players[1]?.connected) return;
+  match.scores = [0, 0];
+  match.state = 'playing';
+  newRound();
+}
+
+function handleSetSettings(ws, msg) {
+  // Only the host (player 1) can change settings
+  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
+  if (playerIdx !== 0) return;
+
+  const rounds = Math.max(1, Math.min(99, Math.floor(Number(msg.rounds)) || 3));
+  match.roundsToWin = rounds;
+
+  // Gravity multiplier: clamp to known presets
+  const validGravities = [0.5, 0.8, 1, 1.5, 2.5];
+  const grav = parseFloat(msg.gravity);
+  match.gravityMultiplier = validGravities.includes(grav) ? grav : 1;
+
+  // Explosion radius: clamp to known presets
+  const validExplosions = [15, 30, 50, 80];
+  const expl = parseInt(msg.explosionRadius);
+  match.explosionRadius = validExplosions.includes(expl) ? expl : DEFAULT_EXPLOSION_RADIUS;
+
+  // Time of day
+  const validTimes = ['day', 'sunset', 'night'];
+  match.timeOfDay = validTimes.includes(msg.timeOfDay) ? msg.timeOfDay : 'day';
+
+  broadcast({
+    type: 'settingsSync',
+    roundsToWin: match.roundsToWin,
+    gravity: match.gravityMultiplier,
+    explosionRadius: match.explosionRadius,
+    timeOfDay: match.timeOfDay,
+  });
+}
+
+function handleDisconnect(ws) {
+  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
+  if (playerIdx === -1) return;
+
+  match.players[playerIdx].connected = false;
+
+  // Notify opponent
+  const otherIdx = 1 - playerIdx;
+  sendTo(otherIdx, { type: 'opponentDisconnected' });
+
+  // Set 60 second reconnect timer
+  match.disconnectTimers[playerIdx] = setTimeout(() => {
+    // Timed out, drop the match
+    match.players[playerIdx] = null;
+    match.disconnectTimers[playerIdx] = null;
+    if (match.banana) {
+      match.banana = null;
+    }
+
+    // If both players are gone, fully reset the match
+    if (!match.players[0] && !match.players[1]) {
+      match = createMatch();
+      return;
+    }
+
+    match.state = 'waiting';
+    // Reset if other player still connected, let them wait for new opponent
+    sendTo(otherIdx, { type: 'opponentTimedOut' });
+  }, 60000);
+}
+
+// ─── Start server ────────────────────────────────────────────────────────────
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`Monkey Maddness server listening on port ${PORT}`);
+  console.log('Share one of these with Player 2:');
+
+  const interfaces = os.networkInterfaces();
+  for (const [name, addrs] of Object.entries(interfaces)) {
+    for (const addr of addrs) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        console.log(`  http://${addr.address}:${PORT}`);
+      }
+    }
+  }
+  console.log(`  http://localhost:${PORT}`);
+});

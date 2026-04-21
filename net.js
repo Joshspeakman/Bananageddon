@@ -1,0 +1,96 @@
+// Bananageddon — Client-side networking (net.js)
+// Handles WebSocket connection and message dispatch.
+// Does not know about canvas, rendering, or physics.
+
+const Net = (function () {
+  let ws = null;
+  let connected = false;
+  const handlers = {};
+
+  // Register a handler for a specific message type
+  function on(type, callback) {
+    if (!handlers[type]) handlers[type] = [];
+    handlers[type].push(callback);
+  }
+
+  // Remove all handlers for a type
+  function off(type) {
+    delete handlers[type];
+  }
+
+  function dispatch(msg) {
+    const cbs = handlers[msg.type];
+    if (cbs) {
+      for (const cb of cbs) cb(msg);
+    }
+    // Also fire a wildcard handler for debugging
+    const wildcards = handlers['*'];
+    if (wildcards) {
+      for (const cb of wildcards) cb(msg);
+    }
+  }
+
+  function connect(playerName, token) {
+    // Build WebSocket URL from current page location
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${protocol}//${location.host}/ws`;
+
+    ws = new WebSocket(url);
+
+    ws.onopen = function () {
+      connected = true;
+      // Send join message
+      const joinMsg = { type: 'join', name: playerName };
+      if (token) joinMsg.token = token;
+      ws.send(JSON.stringify(joinMsg));
+      dispatch({ type: '_connected' });
+    };
+
+    ws.onmessage = function (event) {
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      dispatch(msg);
+    };
+
+    ws.onclose = function () {
+      connected = false;
+      dispatch({ type: '_disconnected' });
+    };
+
+    ws.onerror = function () {
+      connected = false;
+      dispatch({ type: '_error' });
+    };
+  }
+
+  function send(msg) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(msg));
+    }
+  }
+
+  function isConnected() {
+    return connected;
+  }
+
+  function disconnect() {
+    if (ws) {
+      ws.close();
+      ws = null;
+      connected = false;
+    }
+  }
+
+  return {
+    on,
+    off,
+    connect,
+    send,
+    isConnected,
+    disconnect,
+  };
+})();
