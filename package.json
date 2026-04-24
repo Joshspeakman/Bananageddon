@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "A faithful browser recreation of QBasic Gorillas — LAN multiplayer banana-throwing mayhem",
   "main": "server.js",
+  "engines": {
+    "node": ">=16.17"
+  },
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/server-regression.js"
+    "test": "node tests/server-regression.js && node tests/syntax-check.js"
   },
   "dependencies": {
     "ws": "^8.16.0"

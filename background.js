@@ -15,6 +15,7 @@ const Background = (function () {
 
   // ─── Seeded RNG for deterministic effects ───────────────────────────────
   let bgRng = null;
+  let bgSeed = 0;
 
   // ─── Background layers (pre-rendered offscreen) ─────────────────────────
   let bgCanvas = null;
@@ -44,6 +45,108 @@ const Background = (function () {
     night: null, // solid dark + stars
   };
 
+  const STAGE_PALETTES = {
+    city: {
+      day: ['#1D3AA6', '#3554C8', '#5A7BFF', '#9DB8FF'],
+      dawn: ['#241B5F', '#51317F', '#AD563D', '#F0A35B'],
+      dusk: ['#171C5A', '#4B2976', '#B14848', '#F08B44'],
+      night: ['#070D25', '#10183D', '#1C2F66', '#233D7E'],
+      far: '#1C2A71',
+      mid: '#0D163F',
+      near: '#050C23',
+      accent: '#FFE266',
+      glow: '#92B4FF',
+    },
+    desert: {
+      day: ['#A4551D', '#D07B2C', '#E6A455', '#F6D18B'],
+      dawn: ['#3C1E19', '#78402E', '#CB7444', '#F7BE74'],
+      dusk: ['#271418', '#6A2D2D', '#C45C36', '#F3A257'],
+      night: ['#090B21', '#171935', '#3C2C55', '#5A4675'],
+      far: '#8A4E27',
+      mid: '#5A2F15',
+      near: '#241306',
+      accent: '#FFB756',
+      glow: '#FFD38A',
+    },
+    arctic: {
+      day: ['#2D5477', '#4F86AE', '#88C2E0', '#DDF4FF'],
+      dawn: ['#192A4B', '#4A5B86', '#B88088', '#FFE9C4'],
+      dusk: ['#161F47', '#49508E', '#8F668F', '#F3B780'],
+      night: ['#060D24', '#122146', '#213B67', '#335382'],
+      far: '#7CA8C6',
+      mid: '#486989',
+      near: '#203241',
+      accent: '#C2FBFF',
+      glow: '#EFFFFF',
+    },
+    jungle: {
+      day: ['#0B2315', '#154623', '#2E6A2F', '#7CA84D'],
+      dawn: ['#14242B', '#2E3D3A', '#9C5F41', '#E0A44E'],
+      dusk: ['#101B2C', '#2A2642', '#7F3F45', '#C36B3F'],
+      night: ['#040914', '#09131E', '#10291E', '#174128'],
+      far: '#194423',
+      mid: '#0B2410',
+      near: '#040E05',
+      accent: '#D8D34D',
+      glow: '#9DE862',
+    },
+    volcanic: {
+      day: ['#2A0906', '#5A1308', '#88321A', '#C4612A'],
+      dawn: ['#1E0915', '#5F1B2B', '#A2372E', '#F08E42'],
+      dusk: ['#14040D', '#48121E', '#922B1D', '#E26A37'],
+      night: ['#040205', '#140709', '#2B0A08', '#4C1208'],
+      far: '#511306',
+      mid: '#250705',
+      near: '#110202',
+      accent: '#FF8D3A',
+      glow: '#FFC16E',
+    },
+    moon: {
+      day: ['#202638', '#4C5573', '#9CA5C0', '#DCE3F2'],
+      dawn: ['#182137', '#3D496E', '#98839A', '#E5D0C2'],
+      dusk: ['#11182E', '#373F67', '#786593', '#C0A6C2'],
+      night: ['#02040B', '#0A1022', '#18213B', '#28365A'],
+      far: '#404A6B',
+      mid: '#232A45',
+      near: '#0A1122',
+      accent: '#D9E0FF',
+      glow: '#A5B4DC',
+    },
+    underwater: {
+      day: ['#06233A', '#0A4F73', '#0E759A', '#5FD5D8'],
+      dawn: ['#071A32', '#114C65', '#2D7A7D', '#A8D1A1'],
+      dusk: ['#04192C', '#0B3550', '#1C5168', '#52909A'],
+      night: ['#010A16', '#051626', '#072D3A', '#0D4252'],
+      far: '#0D617C',
+      mid: '#054152',
+      near: '#02161E',
+      accent: '#99FAFF',
+      glow: '#5BE0E8',
+    },
+    postapoc: {
+      day: ['#39261C', '#6D4730', '#A06A41', '#D7A05D'],
+      dawn: ['#221521', '#4C2E39', '#8D4A36', '#D48A56'],
+      dusk: ['#1A111B', '#402133', '#7A3A32', '#B85D44'],
+      night: ['#040609', '#111214', '#2A221F', '#44382F'],
+      far: '#6A5236',
+      mid: '#382918',
+      near: '#161008',
+      accent: '#FF9244',
+      glow: '#D1A15A',
+    },
+    cyberpunk: {
+      day: ['#10215D', '#25409E', '#465FD6', '#FF9174'],
+      dawn: ['#1A1757', '#3F2E7D', '#B74F75', '#FF9872'],
+      dusk: ['#120D39', '#31205E', '#934092', '#F45F74'],
+      night: ['#040514', '#0C0C2C', '#25155C', '#3D1E88'],
+      far: '#25155C',
+      mid: '#130A31',
+      near: '#050813',
+      accent: '#FF5DE8',
+      glow: '#54D9FF',
+    },
+  };
+
   // ─── Event type definitions ─────────────────────────────────────────────
   const EVENT_TYPES = {
     lightning: { duration: 300, draw: drawLightning, update: updateLightning },
@@ -66,68 +169,80 @@ const Background = (function () {
     kaiju: { duration: 6000, draw: drawKaiju, update: updateKaiju },
   };
 
+  const EVENT_TYPE_CAPS = {
+    lightning: 4,
+    meteor: 5,
+    birds: 4,
+    fireworks: 4,
+    satellite: 3,
+    airplane: 3,
+    default: 3,
+  };
+
   // ─── Biome event spawn tables (weight-based) ───────────────────────────
   const BIOME_EVENT_TABLES = {
     city: {
-      day:   { airplane: 3, birds: 4 },
-      dawn:  { birds: 5 },
-      dusk:  { birds: 3, bats: 2 },
-      night: { airplane: 2, satellite: 3, meteor: 2 },
+      day:   { airplane: 5, birds: 7, satellite: 1 },
+      dawn:  { birds: 7, airplane: 3 },
+      dusk:  { birds: 5, bats: 3, airplane: 3 },
+      night: { airplane: 4, satellite: 6, meteor: 3, fireworks: 2, ufo: 2, comet: 1 },
     },
     desert: {
-      day:   { birds: 2, dustDevil: 3 },
-      dawn:  { birds: 2 },
-      dusk:  { birds: 2 },
-      night: { meteor: 5, meteorShower: 1, ufo: 2, satellite: 3 },
+      day:   { birds: 3, dustDevil: 6, airplane: 1 },
+      dawn:  { birds: 3, dustDevil: 3 },
+      dusk:  { birds: 3, dustDevil: 4 },
+      night: { meteor: 7, meteorShower: 2, ufo: 3, satellite: 4, comet: 2 },
     },
     arctic: {
-      day:   { birds: 2 },
-      dawn:  {},
-      dusk:  { aurora: 3 },
-      night: { aurora: 8, meteor: 3, satellite: 2 },
+      day:   { birds: 3, airplane: 1 },
+      dawn:  { aurora: 2, birds: 2 },
+      dusk:  { aurora: 5, meteor: 1 },
+      night: { aurora: 10, meteor: 4, satellite: 3, comet: 1 },
     },
     jungle: {
-      day:   { birds: 5 },
-      dawn:  { birds: 6 },
-      dusk:  { bats: 3, birds: 2 },
-      night: { bats: 4, meteor: 1 },
+      day:   { birds: 8, airplane: 1 },
+      dawn:  { birds: 8, bats: 1 },
+      dusk:  { bats: 5, birds: 3 },
+      night: { bats: 7, meteor: 2, ufo: 1 },
     },
     volcanic: {
-      day:   { volcanicEruption: 5 },
-      dawn:  { volcanicEruption: 4 },
-      dusk:  { volcanicEruption: 5 },
-      night: { volcanicEruption: 6, meteor: 2 },
+      day:   { volcanicEruption: 8, meteor: 1 },
+      dawn:  { volcanicEruption: 7, meteor: 1 },
+      dusk:  { volcanicEruption: 8, meteor: 2 },
+      night: { volcanicEruption: 10, meteor: 3, comet: 1 },
     },
     moon: {
-      day:   { meteor: 6 },
-      dawn:  { meteor: 5 },
-      dusk:  { meteor: 5 },
-      night: { meteor: 8, meteorShower: 2, satellite: 1 },
+      day:   { meteor: 8, satellite: 2 },
+      dawn:  { meteor: 7, satellite: 2 },
+      dusk:  { meteor: 7, meteorShower: 1, satellite: 2 },
+      night: { meteor: 10, meteorShower: 3, satellite: 3, comet: 3, ufo: 1 },
     },
     underwater: {
-      day:   { whale: 4 },
-      dawn:  { whale: 3 },
-      dusk:  { whale: 3 },
-      night: { whale: 2 },
+      day:   { whale: 5, satellite: 1 },
+      dawn:  { whale: 4 },
+      dusk:  { whale: 4, fireworks: 1 },
+      night: { whale: 3, ufo: 1 },
     },
     postapoc: {
-      day:   { dustDevil: 3, birds: 1 },
-      dawn:  { birds: 1 },
-      dusk:  { bats: 3 },
-      night: { ufo: 3, kaiju: 1, meteor: 2, fireworks: 1 },
+      day:   { dustDevil: 5, birds: 2, airplane: 1 },
+      dawn:  { birds: 2, dustDevil: 3 },
+      dusk:  { bats: 5, fireworks: 1 },
+      night: { ufo: 4, kaiju: 2, meteor: 3, fireworks: 3, comet: 1 },
     },
     cyberpunk: {
-      day:   { airplane: 2 },
-      dawn:  { airplane: 1 },
-      dusk:  { airplane: 2 },
-      night: { ufo: 2, fireworks: 3, airplane: 2, satellite: 2 },
+      day:   { airplane: 4, ufo: 1, satellite: 1 },
+      dawn:  { airplane: 3, ufo: 1 },
+      dusk:  { airplane: 4, fireworks: 2, satellite: 2 },
+      night: { ufo: 4, fireworks: 5, airplane: 4, satellite: 4, comet: 2 },
     },
   };
 
   // Storm weather adds lightning to any biome
   const WEATHER_EVENT_OVERLAY = {
-    storm:     { lightning: 8 },
-    sandstorm: { dustDevil: 2 },
+    storm:     { lightning: 12, meteor: 1 },
+    sandstorm: { dustDevil: 5 },
+    rain:      { airplane: 1 },
+    snow:      { aurora: 1 },
   };
 
   // ─── Initialization ─────────────────────────────────────────────────────
@@ -163,6 +278,7 @@ const Background = (function () {
     currentBiome = biome;
     currentWeather = weather;
     currentTime = timeOfDay;
+    bgSeed = seed;
     activeEvents = [];
     eventQueue = [];
     roundStartTime = performance.now();
@@ -206,7 +322,7 @@ const Background = (function () {
     if (totalWeight === 0) return;
 
     // Schedule events over ~5 minutes (300 seconds)
-    let t = 3000 + rng() * 5000; // first event after 3-8 seconds
+    let t = 1200 + rng() * 2200; // first event after ~1.2-3.4 seconds
     const maxTime = 300000;
 
     while (t < maxTime) {
@@ -232,8 +348,8 @@ const Background = (function () {
       }
 
       // Next event interval based on type
-      const minInterval = eventType === 'lightning' ? 4000 : 8000;
-      const maxInterval = eventType === 'lightning' ? 12000 : 25000;
+      const minInterval = eventType === 'lightning' ? 1800 : 3500;
+      const maxInterval = eventType === 'lightning' ? 5200 : 9500;
       t += minInterval + rng() * (maxInterval - minInterval);
     }
   }
@@ -291,9 +407,10 @@ const Background = (function () {
   function spawnEvent(type, params) {
     const def = EVENT_TYPES[type];
     if (!def) return;
-    // Limit simultaneous events of same type to 2
+    // Limit simultaneous events by type, but allow busier scenes overall.
     const sameTypeCount = activeEvents.filter(e => e.type === type).length;
-    if (sameTypeCount >= 2) return;
+    const typeCap = EVENT_TYPE_CAPS[type] || EVENT_TYPE_CAPS.default;
+    if (sameTypeCount >= typeCap) return;
 
     activeEvents.push({
       type,
@@ -316,95 +433,187 @@ const Background = (function () {
     };
   }
 
+  function hexToRgb(hexColor) {
+    const hex = (hexColor || '#000000').replace('#', '');
+    if (hex.length === 3) {
+      return {
+        r: parseInt(hex[0] + hex[0], 16),
+        g: parseInt(hex[1] + hex[1], 16),
+        b: parseInt(hex[2] + hex[2], 16),
+      };
+    }
+    return {
+      r: parseInt(hex.slice(0, 2), 16),
+      g: parseInt(hex.slice(2, 4), 16),
+      b: parseInt(hex.slice(4, 6), 16),
+    };
+  }
+
+  function alphaColor(hexColor, alpha) {
+    const rgb = hexToRgb(hexColor);
+    return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${Math.max(0, Math.min(1, alpha)).toFixed(3)})`;
+  }
+
+  function getStagePalette(biome) {
+    return STAGE_PALETTES[biome] || STAGE_PALETTES.city;
+  }
+
+  function drawOrb(target, x, y, radius, fill, stroke, shine) {
+    target.fillStyle = fill;
+    target.beginPath();
+    target.arc(x, y, radius, 0, Math.PI * 2);
+    target.fill();
+    target.strokeStyle = stroke;
+    target.lineWidth = 2;
+    target.stroke();
+    target.fillStyle = alphaColor(shine || '#FFFFFF', 0.28);
+    target.fillRect(Math.round(x - radius * 0.55), Math.round(y - radius * 0.55), Math.max(3, Math.round(radius * 0.45)), Math.max(2, Math.round(radius * 0.16)));
+  }
+
+  function fillBandRows(target, colors) {
+    const rowHeight = Math.ceil(H / colors.length);
+    for (let i = 0; i < colors.length; i++) {
+      target.fillStyle = colors[i];
+      target.fillRect(0, i * rowHeight, W, rowHeight);
+    }
+    target.fillStyle = 'rgba(255,255,255,0.04)';
+    for (let y = 0; y < H * 0.65; y += 6) {
+      target.fillRect(0, y, W, 1);
+    }
+  }
+
+  function drawWaveLayer(target, color, baseY, amplitude, step, seedOffset, fillToBottom) {
+    const rng = mulberry32(bgSeed + seedOffset);
+    target.fillStyle = color;
+    target.beginPath();
+    target.moveTo(0, baseY);
+    for (let x = 0; x <= W + step; x += step) {
+      const height = baseY + Math.sin((x + seedOffset) * 0.018) * amplitude + (rng() - 0.5) * amplitude * 0.4;
+      target.lineTo(x, height);
+    }
+    if (fillToBottom !== false) {
+      target.lineTo(W, H);
+      target.lineTo(0, H);
+    }
+    target.closePath();
+    target.fill();
+  }
+
+  function drawJaggedLayer(target, color, baseY, amplitude, step, seedOffset) {
+    const rng = mulberry32(bgSeed + seedOffset);
+    target.fillStyle = color;
+    target.beginPath();
+    target.moveTo(0, H);
+    target.lineTo(0, baseY);
+    for (let x = 0; x <= W + step; x += step) {
+      const y = baseY - amplitude * (0.25 + rng() * 0.75);
+      target.lineTo(x, y);
+    }
+    target.lineTo(W, H);
+    target.closePath();
+    target.fill();
+  }
+
+  function drawSkylineLayer(target, color, baseY, minWidth, maxWidth, minHeight, maxHeight, seedOffset, windowColor) {
+    const rng = mulberry32(bgSeed + seedOffset);
+    let x = -6;
+    target.fillStyle = color;
+    while (x < W + 8) {
+      const width = minWidth + Math.floor(rng() * Math.max(1, maxWidth - minWidth + 1));
+      const height = minHeight + Math.floor(rng() * Math.max(1, maxHeight - minHeight + 1));
+      const y = baseY - height;
+      target.fillRect(x, y, width, height);
+      if (windowColor) {
+        target.fillStyle = windowColor;
+        for (let wy = y + 8; wy < baseY - 6; wy += 10) {
+          for (let wx = x + 4; wx < x + width - 4; wx += 8) {
+            if (((wx + wy + seedOffset) % 3) === 0) {
+              target.fillRect(wx, wy, 2, 3);
+            }
+          }
+        }
+        target.fillStyle = color;
+      }
+      x += width - 2;
+    }
+  }
+
+  function drawKelpLayer(target, color, count, seedOffset) {
+    const rng = mulberry32(bgSeed + seedOffset);
+    target.fillStyle = color;
+    for (let i = 0; i < count; i++) {
+      const x = Math.floor(rng() * W);
+      const height = H * (0.18 + rng() * 0.2);
+      const segments = 5 + Math.floor(rng() * 4);
+      for (let s = 0; s < segments; s++) {
+        const y = H - (height / segments) * s;
+        const sway = Math.sin((s + 1) * 0.8 + x * 0.03) * 6;
+        target.fillRect(x + sway, y, 3, Math.max(8, height / segments));
+      }
+    }
+  }
+
   // ─── Static background rendering ───────────────────────────────────────
   function renderStaticBackground() {
     if (!bgCtx) return;
     bgCtx.clearRect(0, 0, W, H);
+    const palette = getStagePalette(currentBiome);
 
-    // Draw distant background elements based on biome
     switch (currentBiome) {
+      case 'city':
+        drawSkylineLayer(bgCtx, alphaColor(palette.far, 0.85), H * 0.72, 18, 42, 28, 90, 10, alphaColor(palette.glow, 0.35));
+        drawSkylineLayer(bgCtx, alphaColor(palette.mid, 0.95), H * 0.79, 26, 56, 36, 120, 30, alphaColor(palette.accent, 0.55));
+        break;
       case 'desert':
-        // Distant dunes
-        bgCtx.fillStyle = '#B8860B44';
-        bgCtx.beginPath();
-        bgCtx.moveTo(0, H * 0.6);
-        for (let x = 0; x < W; x += 40) {
-          bgCtx.lineTo(x + 20, H * 0.55 + Math.sin(x * 0.02) * 15);
-        }
-        bgCtx.lineTo(W, H);
-        bgCtx.lineTo(0, H);
-        bgCtx.fill();
+        drawWaveLayer(bgCtx, alphaColor(palette.far, 0.55), H * 0.62, 18, 44, 7);
+        drawJaggedLayer(bgCtx, alphaColor(palette.mid, 0.55), H * 0.72, 42, 48, 12);
+        drawWaveLayer(bgCtx, alphaColor(palette.near, 0.85), H * 0.84, 10, 32, 18);
         break;
-
       case 'arctic':
-        // Distant snow-capped mountains
-        bgCtx.fillStyle = '#B0C4DE44';
-        bgCtx.beginPath();
-        bgCtx.moveTo(0, H * 0.5);
-        const mts = [0.15, 0.25, 0.35, 0.5, 0.65, 0.75, 0.85];
-        for (const mx of mts) {
-          bgCtx.lineTo(W * mx, H * 0.35 + Math.sin(mx * 20) * 20);
-          bgCtx.lineTo(W * (mx + 0.05), H * 0.5);
+        drawJaggedLayer(bgCtx, alphaColor(palette.far, 0.55), H * 0.64, 72, 36, 21);
+        bgCtx.fillStyle = alphaColor('#FFFFFF', 0.45);
+        for (let x = 14; x < W; x += 60) {
+          bgCtx.fillRect(x, H * 0.39 + ((x / 12) % 12), 14, 5);
         }
-        bgCtx.lineTo(W, H);
-        bgCtx.lineTo(0, H);
-        bgCtx.fill();
-        // Snow caps
-        bgCtx.fillStyle = '#FFFFFF33';
-        for (const mx of mts) {
-          bgCtx.fillRect(W * mx - 5, H * 0.35 + Math.sin(mx * 20) * 20 - 3, 10, 6);
-        }
+        drawJaggedLayer(bgCtx, alphaColor(palette.mid, 0.78), H * 0.77, 36, 24, 29);
         break;
-
-      case 'volcanic':
-        // Distant volcano silhouette
-        bgCtx.fillStyle = '#33000088';
-        bgCtx.beginPath();
-        bgCtx.moveTo(W * 0.8, H * 0.6);
-        bgCtx.lineTo(W * 0.85, H * 0.25);
-        bgCtx.lineTo(W * 0.87, H * 0.22);
-        bgCtx.lineTo(W * 0.89, H * 0.25);
-        bgCtx.lineTo(W * 0.95, H * 0.6);
-        bgCtx.lineTo(W, H);
-        bgCtx.lineTo(0, H);
-        bgCtx.fill();
-        break;
-
-      case 'underwater':
-        // Distant seaweed and ocean floor undulation
-        bgCtx.fillStyle = '#005555';
-        bgCtx.beginPath();
-        bgCtx.moveTo(0, H * 0.85);
-        for (let x = 0; x < W; x += 30) {
-          bgCtx.lineTo(x + 15, H * 0.83 + Math.sin(x * 0.05) * 5);
-        }
-        bgCtx.lineTo(W, H);
-        bgCtx.lineTo(0, H);
-        bgCtx.fill();
-        break;
-
       case 'jungle':
-        // Distant canopy layer
-        bgCtx.fillStyle = '#0A3A0A66';
-        bgCtx.beginPath();
-        bgCtx.moveTo(0, H * 0.4);
-        for (let x = 0; x < W; x += 25) {
-          bgCtx.lineTo(x + 12, H * 0.35 + Math.sin(x * 0.08) * 10);
-        }
-        bgCtx.lineTo(W, H);
-        bgCtx.lineTo(0, H);
-        bgCtx.fill();
+        drawWaveLayer(bgCtx, alphaColor(palette.far, 0.72), H * 0.48, 16, 22, 11);
+        drawWaveLayer(bgCtx, alphaColor(palette.mid, 0.88), H * 0.62, 26, 18, 15);
+        drawWaveLayer(bgCtx, alphaColor(palette.near, 0.92), H * 0.84, 10, 16, 19);
         break;
-
+      case 'volcanic':
+        drawJaggedLayer(bgCtx, alphaColor(palette.far, 0.55), H * 0.68, 84, 44, 31);
+        drawJaggedLayer(bgCtx, alphaColor(palette.mid, 0.8), H * 0.8, 42, 28, 36);
+        bgCtx.fillStyle = alphaColor(palette.accent, 0.35);
+        bgCtx.fillRect(W * 0.68, H * 0.56, 4, H * 0.18);
+        bgCtx.fillRect(W * 0.72, H * 0.6, 3, H * 0.14);
+        break;
+      case 'moon':
+        drawWaveLayer(bgCtx, alphaColor(palette.far, 0.6), H * 0.7, 10, 32, 41);
+        drawWaveLayer(bgCtx, alphaColor(palette.mid, 0.85), H * 0.82, 8, 28, 46);
+        bgCtx.fillStyle = alphaColor(palette.glow, 0.2);
+        for (let x = 40; x < W; x += 100) {
+          bgCtx.beginPath();
+          bgCtx.arc(x, H * 0.86, 10 + (x % 14), 0, Math.PI * 2);
+          bgCtx.fill();
+        }
+        break;
+      case 'underwater':
+        drawWaveLayer(bgCtx, alphaColor(palette.far, 0.48), H * 0.72, 12, 34, 51);
+        drawKelpLayer(bgCtx, alphaColor(palette.mid, 0.7), 14, 57);
+        drawWaveLayer(bgCtx, alphaColor(palette.near, 0.92), H * 0.88, 8, 24, 59);
+        break;
+      case 'postapoc':
+        drawSkylineLayer(bgCtx, alphaColor(palette.far, 0.76), H * 0.74, 18, 48, 22, 90, 61, null);
+        drawJaggedLayer(bgCtx, alphaColor(palette.mid, 0.86), H * 0.84, 24, 24, 64);
+        break;
       case 'cyberpunk':
-        // Distant mega-towers
-        if (bgRng) {
-          bgCtx.fillStyle = '#0A0A2E99';
-          for (let i = 0; i < 6; i++) {
-            const tx = W * 0.1 + i * W * 0.15;
-            const th = H * 0.2 + bgRng() * H * 0.3;
-            bgCtx.fillRect(tx, H * 0.4 - th * 0.3, 15, th);
-          }
+        drawSkylineLayer(bgCtx, alphaColor(palette.far, 0.95), H * 0.74, 22, 44, 40, 160, 71, alphaColor(palette.glow, 0.4));
+        drawSkylineLayer(bgCtx, alphaColor(palette.mid, 0.96), H * 0.82, 18, 36, 34, 120, 76, alphaColor(palette.accent, 0.7));
+        bgCtx.fillStyle = alphaColor(palette.glow, 0.18);
+        for (let y = Math.floor(H * 0.42); y < H * 0.88; y += 18) {
+          bgCtx.fillRect(W * 0.55, y, W * 0.35, 1);
         }
         break;
     }
@@ -442,16 +651,12 @@ const Background = (function () {
 
   // ─── Render ─────────────────────────────────────────────────────────────
   function renderSky(ctx, timeOfDay, biome) {
-    // Draw sky gradient for dawn/dusk
-    const grad = SKY_GRADIENTS[timeOfDay];
-    if (grad) {
-      const g = ctx.createLinearGradient(0, 0, 0, H * 0.6);
-      for (const s of grad) {
-        g.addColorStop(s.stop, s.color);
-      }
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H);
-    }
+    const palette = getStagePalette(biome);
+    const colors = palette[timeOfDay] || palette.day;
+    fillBandRows(ctx, colors);
+
+    ctx.fillStyle = alphaColor(palette.glow, 0.12);
+    ctx.fillRect(0, H * 0.4, W, H * 0.16);
 
     // Stars
     if (bgStars.length > 0) {
@@ -464,10 +669,301 @@ const Background = (function () {
       for (const s of bgStars) {
         const flicker = 0.5 + 0.5 * Math.sin(t * s.twinkleSpeed + s.phase);
         const alpha = s.brightness * flicker * starAlphaMult;
-        ctx.fillStyle = `rgba(255,255,255,${alpha.toFixed(2)})`;
+        ctx.fillStyle = alphaColor(palette.glow, alpha);
         ctx.fillRect(Math.floor(s.x), Math.floor(s.y), s.size, s.size);
       }
     }
+  }
+
+  function wrap(value, span) {
+    if (span <= 0) return 0;
+    let out = value % span;
+    if (out < 0) out += span;
+    return out;
+  }
+
+  function getAmbientScale() {
+    if (quality <= 0) return 0.6;
+    if (quality === 1) return 0.85;
+    if (quality >= 3) return 1.35;
+    return 1;
+  }
+
+  function drawChunkCloud(ctx, x, y, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x - 10, y + 2, 20, 6);
+    ctx.fillRect(x - 6, y - 3, 14, 7);
+    ctx.fillRect(x - 2, y - 6, 10, 5);
+    ctx.fillRect(x - 14, y, 8, 5);
+  }
+
+  function drawHoverCar(ctx, x, y, bodyColor, glowColor, dir) {
+    const nose = dir >= 0 ? 6 : -6;
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(x - 6, y - 1, 12, 3);
+    ctx.fillRect(x - 2, y - 3, 6, 2);
+    ctx.fillStyle = glowColor;
+    ctx.fillRect(x + nose - (dir >= 0 ? 0 : 1), y, 2, 1);
+    ctx.fillRect(x - 4, y + 2, 2, 1);
+    ctx.fillRect(x + 2, y + 2, 2, 1);
+  }
+
+  function drawPixelBirdShape(ctx, x, y, color, flapUp) {
+    ctx.fillStyle = color;
+    if (flapUp) {
+      ctx.fillRect(x - 3, y - 1, 2, 1);
+      ctx.fillRect(x + 1, y - 1, 2, 1);
+    } else {
+      ctx.fillRect(x - 3, y, 2, 1);
+      ctx.fillRect(x + 1, y, 2, 1);
+    }
+    ctx.fillRect(x - 1, y, 2, 1);
+  }
+
+  function drawPixelFish(ctx, x, y, color, dir) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x - 4, y - 1, 7, 3);
+    ctx.fillRect(x - 1, y - 2, 3, 1);
+    if (dir >= 0) {
+      ctx.fillRect(x - 6, y - 2, 2, 2);
+      ctx.fillRect(x - 6, y + 1, 2, 2);
+    } else {
+      ctx.fillRect(x + 3, y - 2, 2, 2);
+      ctx.fillRect(x + 3, y + 1, 2, 2);
+    }
+  }
+
+  function drawBubbleColumn(ctx, x, topY, bottomY, t, color) {
+    ctx.fillStyle = color;
+    for (let i = 0; i < 8; i++) {
+      const p = wrap(t * 18 + i * 9, bottomY - topY);
+      const y = bottomY - p;
+      const sway = Math.sin(t * 2 + i * 0.7) * 3;
+      const size = 1 + (i % 2);
+      ctx.fillRect(Math.floor(x + sway), Math.floor(y), size, size);
+    }
+  }
+
+  function drawSmokeColumn(ctx, x, baseY, t, color) {
+    ctx.fillStyle = color;
+    for (let i = 0; i < 7; i++) {
+      const age = wrap(t * 10 + i * 7, 60);
+      const y = baseY - age;
+      const w = 5 + (i % 3) * 2;
+      const sway = Math.sin(t * 1.6 + i) * (2 + i * 0.4);
+      ctx.fillRect(Math.floor(x + sway), Math.floor(y), w, 3);
+      ctx.fillRect(Math.floor(x + sway + 1), Math.floor(y - 2), Math.max(2, w - 2), 2);
+    }
+  }
+
+  function renderAmbientActivity(ctx) {
+    const scale = getAmbientScale();
+    const t = (performance.now() - roundStartTime) / 1000;
+    const palette = getStagePalette(currentBiome);
+
+    ctx.save();
+
+    switch (currentBiome) {
+      case 'city': {
+        for (let i = 0; i < Math.round(6 * scale); i++) {
+          const laneY = H * (0.18 + (i % 3) * 0.05);
+          const dir = i % 2 === 0 ? 1 : -1;
+          const span = W + 90;
+          let x = wrap(t * (28 + i * 2) + i * 97, span) - 45;
+          if (dir < 0) x = W - x;
+          drawHoverCar(ctx, Math.floor(x), Math.floor(laneY + Math.sin(t * 2 + i) * 2), palette.glow, palette.accent, dir);
+        }
+        for (let i = 0; i < 4; i++) {
+          const bx = W * (0.12 + i * 0.2);
+          const blink = Math.sin(t * 4 + i * 1.7) > 0 ? palette.accent : palette.glow;
+          ctx.fillStyle = blink;
+          ctx.fillRect(Math.floor(bx), Math.floor(H * 0.33 + (i % 2) * 8), 2, 2);
+        }
+        ctx.globalAlpha = 0.22;
+        drawChunkCloud(ctx, wrap(t * 8 + 40, W + 50) - 25, H * 0.23, alphaColor(palette.glow, 0.6));
+        drawChunkCloud(ctx, wrap(t * 6 + 210, W + 60) - 30, H * 0.28, alphaColor('#FFFFFF', 0.25));
+        break;
+      }
+      case 'desert': {
+        ctx.fillStyle = alphaColor(palette.glow, 0.18);
+        for (let i = 0; i < 4; i++) {
+          const y = H * (0.58 + i * 0.05);
+          for (let x = -20; x < W + 20; x += 26) {
+            const drift = wrap(t * (14 + i * 4) + x + i * 20, W + 40) - 20;
+            ctx.fillRect(Math.floor(drift), Math.floor(y + Math.sin((x + t * 20) * 0.03) * 2), 8, 1);
+          }
+        }
+        for (let i = 0; i < Math.round(7 * scale); i++) {
+          const vx = wrap(t * 12 + i * 53, W + 40) - 20;
+          const vy = H * 0.24 + Math.sin(t * 1.8 + i) * 10 + (i % 3) * 12;
+          drawPixelBirdShape(ctx, Math.floor(vx), Math.floor(vy), alphaColor('#2A1407', 0.85), Math.sin(t * 8 + i) > 0);
+        }
+        ctx.fillStyle = alphaColor('#3C1F0A', 0.8);
+        for (let i = 0; i < 2; i++) {
+          const x = wrap(t * (9 + i * 2) + i * 180, W + 80) - 40;
+          const y = H * 0.73 + i * 10;
+          ctx.fillRect(Math.floor(x), Math.floor(y), 18, 2);
+          ctx.fillRect(Math.floor(x + 3), Math.floor(y - 4), 3, 4);
+          ctx.fillRect(Math.floor(x + 9), Math.floor(y - 5), 3, 5);
+          ctx.fillRect(Math.floor(x + 14), Math.floor(y - 3), 2, 3);
+        }
+        break;
+      }
+      case 'arctic': {
+        ctx.globalAlpha = 0.28;
+        drawChunkCloud(ctx, wrap(t * 5 + 70, W + 70) - 35, H * 0.18, alphaColor('#FFFFFF', 0.55));
+        drawChunkCloud(ctx, wrap(t * 3 + 260, W + 70) - 35, H * 0.26, alphaColor(palette.glow, 0.45));
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = alphaColor('#FFFFFF', 0.7);
+        for (let i = 0; i < Math.round(40 * scale); i++) {
+          const x = (i * 43 + Math.floor(t * 15)) % W;
+          const y = (i * 27 + Math.floor(t * 9)) % Math.floor(H * 0.55);
+          if ((i + Math.floor(t * 3)) % 3 === 0) ctx.fillRect(x, y, 1, 1);
+        }
+        if (currentTime !== 'day') {
+          ctx.fillStyle = alphaColor('#7FFFD4', 0.12);
+          for (let x = 0; x < W; x += 6) {
+            const y = H * 0.08 + Math.sin(x * 0.012 + t * 0.9) * 12;
+            ctx.fillRect(x, Math.floor(y), 4, 18 + (x % 7));
+          }
+        }
+        break;
+      }
+      case 'jungle': {
+        ctx.fillStyle = alphaColor('#0F2410', 0.65);
+        for (let i = 0; i < 10; i++) {
+          const x = W * (0.08 + i * 0.09);
+          const sway = Math.sin(t * 1.7 + i) * 5;
+          ctx.fillRect(Math.floor(x + sway), 0, 2, Math.floor(H * 0.28));
+          ctx.fillRect(Math.floor(x + sway - 3), Math.floor(H * 0.12), 8, 2);
+        }
+        const bugColor = currentTime === 'night' ? alphaColor(palette.glow, 0.8) : alphaColor(palette.accent, 0.55);
+        ctx.fillStyle = bugColor;
+        for (let i = 0; i < Math.round(32 * scale); i++) {
+          const x = wrap(t * (6 + (i % 4)) + i * 31, W + 20) - 10;
+          const y = H * 0.28 + Math.sin(t * 2.6 + i * 0.6) * 26 + (i % 5) * 18;
+          ctx.fillRect(Math.floor(x), Math.floor(y), 2, 2);
+        }
+        for (let i = 0; i < Math.round(6 * scale); i++) {
+          const x = wrap(t * 16 + i * 83, W + 30) - 15;
+          const y = H * 0.16 + Math.sin(t * 2 + i) * 12;
+          drawPixelBirdShape(ctx, Math.floor(x), Math.floor(y), alphaColor('#0A0A0A', 0.85), Math.sin(t * 10 + i) > 0);
+        }
+        break;
+      }
+      case 'volcanic': {
+        drawSmokeColumn(ctx, W * 0.15, H * 0.56, t, alphaColor('#5D3A32', 0.5));
+        drawSmokeColumn(ctx, W * 0.82, H * 0.54, t + 1.2, alphaColor('#6A4941', 0.45));
+        ctx.fillStyle = alphaColor(palette.accent, 0.65);
+        for (let i = 0; i < Math.round(34 * scale); i++) {
+          const x = W * (0.1 + ((i * 17) % 80) / 100);
+          const y = H * 0.75 - wrap(t * (20 + (i % 4) * 4) + i * 11, 90);
+          ctx.fillRect(Math.floor(x + Math.sin(t * 2 + i) * 6), Math.floor(y), 2, 2);
+        }
+        ctx.fillStyle = alphaColor('#FF4D22', 0.35);
+        ctx.fillRect(Math.floor(W * 0.8), Math.floor(H * 0.56), 16, 4);
+        break;
+      }
+      case 'moon': {
+        for (let i = 0; i < Math.round(4 * scale); i++) {
+          const x = wrap(t * (18 + i * 4) + i * 140, W + 60) - 30;
+          const y = H * 0.12 + i * 18;
+          ctx.fillStyle = alphaColor(palette.glow, 0.85);
+          ctx.fillRect(Math.floor(x), Math.floor(y), 2, 2);
+          ctx.fillRect(Math.floor(x - 5), Math.floor(y + 1), 4, 1);
+        }
+        ctx.fillStyle = alphaColor('#FFF2C7', 0.7);
+        for (let i = 0; i < Math.round(5 * scale); i++) {
+          const age = wrap(t * (28 + i * 5) + i * 20, W + 80);
+          const x = W - age;
+          const y = H * 0.14 + i * 16;
+          ctx.fillRect(Math.floor(x), Math.floor(y), 2, 2);
+          ctx.fillRect(Math.floor(x - 10), Math.floor(y - 1), 8, 1);
+        }
+        ctx.fillStyle = alphaColor(palette.accent, 0.5);
+        for (let i = 0; i < 3; i++) {
+          const bx = W * (0.2 + i * 0.28);
+          if (Math.sin(t * 3 + i) > -0.2) ctx.fillRect(Math.floor(bx), Math.floor(H * 0.76), 2, 2);
+        }
+        break;
+      }
+      case 'underwater': {
+        for (let i = 0; i < Math.round(10 * scale); i++) {
+          const dir = i % 2 === 0 ? 1 : -1;
+          const span = W + 30;
+          let x = wrap(t * (10 + (i % 3) * 3) + i * 44, span) - 15;
+          if (dir < 0) x = W - x;
+          const y = H * 0.25 + (i % 5) * 18 + Math.sin(t * 2 + i) * 6;
+          drawPixelFish(ctx, Math.floor(x), Math.floor(y), alphaColor(palette.glow, 0.7), dir);
+        }
+        for (let i = 0; i < 4; i++) {
+          drawBubbleColumn(ctx, W * (0.12 + i * 0.22), H * 0.22, H * 0.9, t + i, alphaColor('#C8FFFF', 0.45));
+        }
+        ctx.fillStyle = alphaColor('#D7A6FF', 0.45);
+        for (let i = 0; i < 3; i++) {
+          const x = W * (0.25 + i * 0.24) + Math.sin(t * 1.4 + i) * 10;
+          const y = H * 0.34 + Math.sin(t * 1.9 + i) * 12;
+          ctx.fillRect(Math.floor(x), Math.floor(y), 8, 4);
+          ctx.fillRect(Math.floor(x + 1), Math.floor(y + 4), 1, 5);
+          ctx.fillRect(Math.floor(x + 3), Math.floor(y + 4), 1, 6);
+          ctx.fillRect(Math.floor(x + 5), Math.floor(y + 4), 1, 5);
+        }
+        break;
+      }
+      case 'postapoc': {
+        drawSmokeColumn(ctx, W * 0.18, H * 0.62, t, alphaColor('#4D433C', 0.42));
+        drawSmokeColumn(ctx, W * 0.71, H * 0.58, t + 0.8, alphaColor('#4C453A', 0.38));
+        ctx.fillStyle = alphaColor('#FF8A44', 0.55);
+        for (let i = 0; i < Math.round(26 * scale); i++) {
+          const x = wrap(t * (8 + (i % 3)) + i * 29, W + 20) - 10;
+          const y = H * 0.46 + wrap(i * 11 - t * 12, H * 0.45);
+          ctx.fillRect(Math.floor(x), Math.floor(y), 2, 2);
+        }
+        for (let i = 0; i < 3; i++) {
+          const bx = W * (0.16 + i * 0.31);
+          ctx.fillStyle = Math.sin(t * 5 + i) > 0 ? palette.accent : palette.glow;
+          ctx.fillRect(Math.floor(bx), Math.floor(H * 0.42 + i * 6), 2, 2);
+        }
+        for (let i = 0; i < Math.round(5 * scale); i++) {
+          const x = wrap(t * 13 + i * 71, W + 20) - 10;
+          const y = H * 0.2 + (i % 3) * 14 + Math.sin(t * 2 + i) * 8;
+          drawPixelBirdShape(ctx, Math.floor(x), Math.floor(y), alphaColor('#0C0908', 0.85), Math.sin(t * 9 + i) > 0);
+        }
+        break;
+      }
+      case 'cyberpunk': {
+        for (let i = 0; i < Math.round(10 * scale); i++) {
+          const laneY = H * (0.16 + (i % 4) * 0.06);
+          const dir = i % 2 === 0 ? 1 : -1;
+          const span = W + 110;
+          let x = wrap(t * (36 + i * 3) + i * 88, span) - 55;
+          if (dir < 0) x = W - x;
+          drawHoverCar(ctx, Math.floor(x), Math.floor(laneY + Math.sin(t * 3 + i) * 3), palette.accent, palette.glow, dir);
+        }
+        ctx.fillStyle = alphaColor(palette.glow, 0.45);
+        for (let i = 0; i < 8; i++) {
+          const x = W * (0.1 + i * 0.1);
+          const flicker = Math.sin(t * 6 + i * 2) > -0.15;
+          if (flicker) ctx.fillRect(Math.floor(x), Math.floor(H * 0.42 + (i % 4) * 10), 14, 3);
+        }
+        ctx.fillStyle = alphaColor(palette.accent, 0.2);
+        for (let y = 0; y < H * 0.55; y += 14) {
+          const sweep = wrap(t * 60 + y * 2, W + 40) - 20;
+          ctx.fillRect(Math.floor(sweep), y, 18, 1);
+        }
+        break;
+      }
+    }
+
+    ctx.restore();
+  }
+
+  function eraseColumn(x, w) {
+    if (!bgCtx) return;
+    bgCtx.save();
+    bgCtx.globalCompositeOperation = 'destination-out';
+    bgCtx.fillRect(x, 0, w, H);
+    bgCtx.restore();
   }
 
   function renderBackground(ctx) {
@@ -475,6 +971,7 @@ const Background = (function () {
     if (bgCanvas) {
       ctx.drawImage(bgCanvas, 0, 0);
     }
+    renderAmbientActivity(ctx);
   }
 
   function renderEvents(ctx) {
@@ -488,9 +985,58 @@ const Background = (function () {
 
   // ─── Event draw functions ───────────────────────────────────────────────
 
+  function buildLightningGeometry(ev) {
+    const seed = (
+      (Math.floor(ev.params.x || 0) * 73856093) ^
+      (Math.floor((ev.params.branches || 0) * 31) * 19349663) ^
+      0x9E3779B9
+    ) >>> 0;
+    const rng = mulberry32(seed);
+    const mainPoints = [];
+    const branches = [];
+    const startX = ev.params.x;
+    let x = startX;
+    let y = 0;
+    const segments = 8 + Math.floor(ev.params.branches * 2);
+    const segH = H * 0.7 / segments;
+    mainPoints.push({ x, y });
+
+    for (let i = 0; i < segments; i++) {
+      x += (rng() - 0.5) * 30;
+      y += segH;
+      mainPoints.push({ x, y });
+
+      if (i > 2 && i < segments - 1 && rng() < 0.3 && ev.params.branches > 2) {
+        const branch = [{ x, y }];
+        let bx = x;
+        let by = y;
+        const branchLen = 3 + Math.floor(rng() * 3);
+        for (let j = 0; j < branchLen; j++) {
+          bx += (rng() - 0.5) * 20 + (rng() < 0.5 ? 10 : -10);
+          by += segH * 0.7;
+          branch.push({ x: bx, y: by });
+        }
+        branches.push(branch);
+      }
+    }
+
+    return { mainPoints, branches };
+  }
+
+  function strokePolyline(ctx, points) {
+    if (!points || points.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.stroke();
+  }
+
   function drawLightning(ctx, ev) {
     const alpha = ev.progress < 0.3 ? 1 : Math.max(0, 1 - (ev.progress - 0.3) / 0.7);
     if (alpha < 0.01) return;
+    if (!ev.data.geometry) ev.data.geometry = buildLightningGeometry(ev);
 
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -498,60 +1044,30 @@ const Background = (function () {
     ctx.lineWidth = 3;
     ctx.shadowColor = '#8888FF';
     ctx.shadowBlur = quality >= 2 ? 8 : 0;
-
-    // Main bolt
-    const startX = ev.params.x;
-    let x = startX, y = 0;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    const segments = 8 + Math.floor(ev.params.branches * 2);
-    const segH = H * 0.7 / segments;
-    for (let i = 0; i < segments; i++) {
-      x += (Math.random() - 0.5) * 30;
-      y += segH;
-      ctx.lineTo(x, y);
-
-      // Branch
-      if (i > 2 && i < segments - 1 && Math.random() < 0.3 && ev.params.branches > 2) {
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        let bx = x, by = y;
-        const branchLen = 3 + Math.floor(Math.random() * 3);
-        for (let j = 0; j < branchLen; j++) {
-          bx += (Math.random() - 0.5) * 20 + (Math.random() < 0.5 ? 10 : -10);
-          by += segH * 0.7;
-          ctx.lineTo(bx, by);
-        }
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-      }
+    strokePolyline(ctx, ev.data.geometry.mainPoints);
+    for (const branch of ev.data.geometry.branches) {
+      strokePolyline(ctx, branch);
     }
-    ctx.stroke();
 
     ctx.shadowBlur = 0;
     ctx.restore();
+  }
 
-    // Trigger flash in lighting system
-    if (ev.age < 50) {
+  function updateLightning(ev, dt) {
+    if (!ev.data.geometry) ev.data.geometry = buildLightningGeometry(ev);
+    if (!ev.data.effectsTriggered) {
+      ev.data.effectsTriggered = true;
       Lighting.triggerLightningFlash();
-      // Trigger thunder after a delay (simulating speed of sound)
-      // Delay varies based on distance (x position), 1-2.5 seconds
       const distance = Math.abs(ev.params.x - W / 2);
       const maxDistance = W / 2;
       const relativeDistance = Math.min(1, distance / maxDistance);
-      const thunderDelay = 1000 + relativeDistance * 1500; // 1-2.5 seconds
+      const thunderDelay = 1000 + relativeDistance * 1500;
       setTimeout(() => {
         if (typeof window !== 'undefined' && window.playThunderSound) {
           window.playThunderSound();
         }
       }, thunderDelay);
     }
-  }
-
-  function updateLightning(ev, dt) {
-    // Nothing extra needed
   }
 
   function drawTornado(ctx, ev) {
@@ -1079,5 +1595,6 @@ const Background = (function () {
     renderSky,
     renderBackground,
     renderEvents,
+    eraseColumn,
   };
 })();

@@ -47,11 +47,11 @@ function httpRequest(port, reqPath) {
   });
 }
 
-async function startServer() {
+async function startServer(envOverrides = {}) {
   const port = await getFreePort();
   const proc = spawn('node', ['server.js'], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port) },
+    env: { ...process.env, PORT: String(port), ...envOverrides },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -97,8 +97,8 @@ async function stopServer(server) {
   server.proc.kill('SIGKILL');
 }
 
-async function withServer(run) {
-  const server = await startServer();
+async function withServer(run, options = {}) {
+  const server = await startServer(options.env || {});
   try {
     await run(server);
   } finally {
@@ -432,6 +432,286 @@ async function testGuestCannotClearMatch() {
   });
 }
 
+async function testWaitingReconnectKeepsReservedSlot() {
+  await withServer(async ({ port }) => {
+    const host = await Client.connect(port, 'Host');
+    const hostAssigned = await host.waitForType('assigned');
+    await host.waitForType('waiting');
+
+    const teamMarker = host.messages.length;
+    host.send({ type: 'setSettings', gameMode: 'team' });
+    await host.waitFor(
+      msg => msg.type === 'settingsSync' && msg.settings && msg.settings.gameMode === 'team',
+      { fromIndex: teamMarker, description: 'host team settingsSync' }
+    );
+
+    const guest = await Client.connect(port, 'Guest');
+    const guestAssigned = await guest.waitForType('assigned');
+    assert.strictEqual(guestAssigned.player, 2);
+    await guest.waitFor(
+      msg => msg.type === 'waiting' && msg.mode === 'team',
+      { description: 'guest team waiting state' }
+    );
+
+    try {
+      const guestMarker = guest.messages.length;
+      await host.close();
+      await guest.waitFor(
+        msg => msg.type === 'waiting' && msg.connectedPlayers === 1 && msg.hostPlayer === 1,
+        { fromIndex: guestMarker, description: 'guest waiting after host disconnect' }
+      );
+
+      const intruder = await Client.connect(port, 'Intruder');
+      const intruderAssigned = await intruder.waitForType('assigned');
+      assert.strictEqual(intruderAssigned.player, 3);
+
+      const hostReconnect = await Client.connect(port, 'Host', hostAssigned.token);
+      const reconnectAssigned = await hostReconnect.waitForType('assigned');
+      assert.strictEqual(reconnectAssigned.player, 1);
+      assert.strictEqual(reconnectAssigned.hostPlayer, 1);
+
+      await Promise.all([intruder.close(), hostReconnect.close()]);
+    } finally {
+      await guest.close();
+    }
+  });
+}
+
+async function testHostPromotionAfterTimeout() {
+  await withServer(async ({ port }) => {
+    const host = await Client.connect(port, 'Host');
+    await host.waitForType('assigned');
+    await host.waitForType('waiting');
+    host.send({ type: 'setSettings', gameMode: 'team' });
+    await host.waitFor(
+      msg => msg.type === 'settingsSync' && msg.settings && msg.settings.gameMode === 'team',
+      { description: 'team settingsSync before timeout' }
+    );
+
+    const guest = await Client.connect(port, 'Guest');
+    await guest.waitForType('assigned');
+    await guest.waitFor(
+      msg => msg.type === 'waiting' && msg.mode === 'team',
+      { description: 'guest waiting before timeout' }
+    );
+
+    try {
+      const guestMarker = guest.messages.length;
+      await host.close();
+      await guest.waitFor(
+        msg => msg.type === 'waiting' && msg.connectedPlayers === 1,
+        { fromIndex: guestMarker, description: 'guest waiting after host disconnect' }
+      );
+
+      const promoteMarker = guest.messages.length;
+      await guest.waitFor(
+        msg => msg.type === 'waiting' && msg.hostPlayer === 2,
+        { fromIndex: promoteMarker, timeout: 1500, description: 'host promotion waiting state' }
+      );
+
+      const settingsMarker = guest.messages.length;
+      guest.send({ type: 'setSettings', mapSize: 'large' });
+      const settingsSync = await guest.waitFor(
+        msg => msg.type === 'settingsSync' && msg.settings && msg.settings.mapSize === 'large',
+        { fromIndex: settingsMarker, description: 'promoted host settingsSync' }
+      );
+      assert.strictEqual(settingsSync.settings.mapSize, 'large');
+    } finally {
+      await guest.close();
+    }
+  }, { env: { DISCONNECT_TIMEOUT_MS: '250' } });
+}
+
+async function testStatusReportsReservedReconnectSlots() {
+  await withServer(async ({ port }) => {
+    const host = await Client.connect(port, 'Host');
+    await host.waitForType('assigned');
+    await host.waitForType('waiting');
+    host.send({ type: 'setSettings', gameMode: 'team' });
+    await host.waitFor(
+      msg => msg.type === 'settingsSync' && msg.settings && msg.settings.gameMode === 'team',
+      { description: 'team settingsSync for status test' }
+    );
+
+    const guest = await Client.connect(port, 'Guest');
+    await guest.waitForType('assigned');
+    await guest.waitFor(
+      msg => msg.type === 'waiting' && msg.mode === 'team',
+      { description: 'guest waiting for status test' }
+    );
+
+    try {
+      await host.close();
+      await delay(100);
+      const status = await httpRequest(port, '/status');
+      const parsed = JSON.parse(status.body);
+      assert.strictEqual(parsed.active, true);
+      assert.strictEqual(parsed.connectedPlayerCount, 1);
+      assert.strictEqual(parsed.reservedPlayerCount, 1);
+      assert.ok(parsed.playerNames.includes('Host'));
+      assert.ok(parsed.playerNames.includes('Guest'));
+      assert.strictEqual(parsed.hostPlayer, 1);
+    } finally {
+      await guest.close();
+    }
+  });
+}
+
+async function testReconnectStateSyncPreservesTurnRemaining() {
+  await withServer(async ({ port }) => {
+    const host = await Client.connect(port, 'Host Solo');
+    const assigned = await host.waitForType('assigned');
+
+    try {
+      await host.waitForType('waiting');
+      const marker = host.messages.length;
+      host.send({ type: 'setSettings', gameMode: 'targetpractice', turnTimer: 15 });
+      await host.waitFor(
+        msg => msg.type === 'roundStart' && msg.mode === 'targetpractice',
+        { fromIndex: marker, description: 'target practice roundStart with timer' }
+      );
+
+      await delay(2100);
+      await host.close();
+
+      const reconnect = await Client.connect(port, 'Host Solo', assigned.token);
+      const reconnectAssigned = await reconnect.waitForType('assigned');
+      const stateSync = await reconnect.waitFor(
+        msg => msg.type === 'stateSync' && msg.state === 'playing',
+        { description: 'playing stateSync after reconnect' }
+      );
+
+      assert.strictEqual(reconnectAssigned.player, 1);
+      assert.strictEqual(stateSync.hostPlayer, 1);
+      assert.ok(stateSync.turnRemainingMs > 9000, `expected remaining time above 9s, got ${stateSync.turnRemainingMs}`);
+      assert.ok(stateSync.turnRemainingMs < 15000, `expected remaining time below full turn, got ${stateSync.turnRemainingMs}`);
+
+      await reconnect.close();
+    } finally {
+      await host.close();
+    }
+  });
+}
+
+async function testPauseStateFreezesTurnTimerAndBlocksFire() {
+  await withServer(async ({ port }) => {
+    const host = await Client.connect(port, 'Host');
+    let guest = null;
+
+    try {
+      await host.waitForType('waiting');
+      const settingsMarker = host.messages.length;
+      host.send({ type: 'setSettings', turnTimer: 15 });
+      await host.waitFor(
+        msg => msg.type === 'settingsSync' && msg.settings && msg.settings.turnTimer === 15,
+        { fromIndex: settingsMarker, description: 'turn timer settingsSync before pause test' }
+      );
+
+      guest = await Client.connect(port, 'Guest');
+      await Promise.all([
+        host.waitFor(msg => msg.type === 'roundStart' && msg.mode === 'classic', { description: 'host classic roundStart' }),
+        guest.waitFor(msg => msg.type === 'roundStart' && msg.mode === 'classic', { description: 'guest classic roundStart' }),
+      ]);
+
+      await delay(1200);
+
+      const pauseHostMarker = host.messages.length;
+      const pauseGuestMarker = guest.messages.length;
+      host.send({ type: 'setPaused', paused: true });
+
+      const [hostPaused, guestPaused] = await Promise.all([
+        host.waitFor(msg => msg.type === 'pauseState' && msg.paused === true, {
+          fromIndex: pauseHostMarker,
+          description: 'host pauseState broadcast',
+        }),
+        guest.waitFor(msg => msg.type === 'pauseState' && msg.paused === true, {
+          fromIndex: pauseGuestMarker,
+          description: 'guest pauseState broadcast',
+        }),
+      ]);
+
+      assert.strictEqual(hostPaused.pausedByPlayer, 1);
+      assert.strictEqual(guestPaused.pausedByName, 'Host');
+      assert.ok(hostPaused.turnRemainingMs > 10000, `expected paused timer above 10s, got ${hostPaused.turnRemainingMs}`);
+
+      const noThrowHost = host.expectNo(
+        msg => msg.type === 'throwAnim',
+        { fromIndex: host.messages.length, timeout: 800, description: 'throwAnim while paused for host' }
+      );
+      const noThrowGuest = guest.expectNo(
+        msg => msg.type === 'throwAnim',
+        { fromIndex: guest.messages.length, timeout: 800, description: 'throwAnim while paused for guest' }
+      );
+
+      host.send({ type: 'fire', angle: 45, velocity: 60 });
+      await Promise.all([noThrowHost, noThrowGuest]);
+
+      await delay(1200);
+
+      const resumeHostMarker = host.messages.length;
+      const resumeGuestMarker = guest.messages.length;
+      guest.send({ type: 'setPaused', paused: false });
+
+      const [hostResumed, guestResumed] = await Promise.all([
+        host.waitFor(msg => msg.type === 'pauseState' && msg.paused === false, {
+          fromIndex: resumeHostMarker,
+          description: 'host resume pauseState broadcast',
+        }),
+        guest.waitFor(msg => msg.type === 'pauseState' && msg.paused === false, {
+          fromIndex: resumeGuestMarker,
+          description: 'guest resume pauseState broadcast',
+        }),
+      ]);
+
+      assert.ok(
+        hostResumed.turnRemainingMs >= hostPaused.turnRemainingMs - 500,
+        `expected resume timer to stay near paused value (${hostPaused.turnRemainingMs}), got ${hostResumed.turnRemainingMs}`
+      );
+      assert.strictEqual(guestResumed.paused, false);
+    } finally {
+      await Promise.all([host.close(), guest ? guest.close() : Promise.resolve()]);
+    }
+  });
+}
+
+async function testLeaveMatchReturnsOpponentToLobby() {
+  await withServer(async ({ port }) => {
+    const host = await Client.connect(port, 'Host');
+    const guest = await Client.connect(port, 'Guest');
+
+    try {
+      await Promise.all([
+        host.waitFor(msg => msg.type === 'roundStart' && msg.mode === 'classic', { description: 'host roundStart before leave' }),
+        guest.waitFor(msg => msg.type === 'roundStart' && msg.mode === 'classic', { description: 'guest roundStart before leave' }),
+      ]);
+
+      const hostMarker = host.messages.length;
+      const guestMarker = guest.messages.length;
+      host.send({ type: 'leaveMatch' });
+
+      const leftMatch = await host.waitFor(
+        msg => msg.type === 'leftMatch',
+        { fromIndex: hostMarker, description: 'leftMatch acknowledgement' }
+      );
+      const opponentLeft = await guest.waitFor(
+        msg => msg.type === 'opponentLeft' && msg.playerName === 'Host',
+        { fromIndex: guestMarker, description: 'opponentLeft after leaveMatch' }
+      );
+      const waiting = await guest.waitFor(
+        msg => msg.type === 'waiting' && msg.connectedPlayers === 1,
+        { fromIndex: guestMarker, description: 'waiting state after opponent leaves' }
+      );
+
+      assert.strictEqual(leftMatch.type, 'leftMatch');
+      assert.strictEqual(opponentLeft.playerName, 'Host');
+      assert.strictEqual(waiting.connectedPlayers, 1);
+      assert.strictEqual(waiting.hostPlayer, 2);
+    } finally {
+      await Promise.all([host.close(), guest.close()]);
+    }
+  });
+}
+
 const TESTS = [
   ['status and shared route', testStatusAndSharedRoute],
   ['solo target practice auto-start', testSoloTargetPracticeAutoStart],
@@ -439,6 +719,12 @@ const TESTS = [
   ['over-capacity lobby is blocked', testLobbyOverCapacityBlocksStart],
   ['late join is rejected while playing', testRejectJoinWhilePlaying],
   ['guest cannot clear the match', testGuestCannotClearMatch],
+  ['waiting reconnect keeps reserved slot', testWaitingReconnectKeepsReservedSlot],
+  ['host promotion after timeout', testHostPromotionAfterTimeout],
+  ['status reports reserved reconnect slots', testStatusReportsReservedReconnectSlots],
+  ['reconnect state sync preserves turn remaining', testReconnectStateSyncPreservesTurnRemaining],
+  ['pause freezes timer and blocks fire', testPauseStateFreezesTurnTimerAndBlocksFire],
+  ['leave match returns opponent to lobby', testLeaveMatchReturnsOpponentToLobby],
 ];
 
 async function main() {

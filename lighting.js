@@ -8,6 +8,8 @@ const Lighting = (function () {
   // ─── Lighting buffer (offscreen canvas) ──────────────────────────────────
   let lightCanvas = null;
   let lightCtx = null;
+  let effectCanvas = null;
+  let effectCtx = null;
   let W = 640, H = 480;
 
   // ─── Active light sources ────────────────────────────────────────────────
@@ -55,6 +57,18 @@ const Lighting = (function () {
     sandstorm: { r: 40,  g: 20,  b: -20, aMult: 1.3 },
   };
 
+  const BIOME_TINT_MODS = {
+    city:        { r: 8,   g: 8,   b: 18,  a: 0.03 },
+    desert:      { r: 36,  g: 16,  b: -12, a: 0.04 },
+    arctic:      { r: -10, g: 8,   b: 20,  a: 0.03 },
+    jungle:      { r: -8,  g: 18,  b: -10, a: 0.04 },
+    volcanic:    { r: 24,  g: -8,  b: -16, a: 0.06 },
+    moon:        { r: -12, g: -6,  b: 12,  a: 0.05 },
+    underwater:  { r: -16, g: 16,  b: 26,  a: 0.05 },
+    postapoc:    { r: 22,  g: 10,  b: -6,  a: 0.05 },
+    cyberpunk:   { r: 10,  g: -8,  b: 28,  a: 0.06 },
+  };
+
   // ─── Initialization ─────────────────────────────────────────────────────
   function init(width, height) {
     W = width;
@@ -64,6 +78,11 @@ const Lighting = (function () {
     lightCanvas.height = H;
     lightCtx = lightCanvas.getContext('2d');
     lightCtx.imageSmoothingEnabled = false;
+    effectCanvas = document.createElement('canvas');
+    effectCanvas.width = W;
+    effectCanvas.height = H;
+    effectCtx = effectCanvas.getContext('2d');
+    effectCtx.imageSmoothingEnabled = false;
     lights = [];
     flashAlpha = 0;
   }
@@ -77,6 +96,12 @@ const Lighting = (function () {
       lightCtx = lightCanvas.getContext('2d');
       lightCtx.imageSmoothingEnabled = false;
     }
+    if (effectCanvas) {
+      effectCanvas.width = W;
+      effectCanvas.height = H;
+      effectCtx = effectCanvas.getContext('2d');
+      effectCtx.imageSmoothingEnabled = false;
+    }
   }
 
   function setQuality(q) {
@@ -84,21 +109,22 @@ const Lighting = (function () {
   }
 
   // ─── Compute ambient tint for current conditions ─────────────────────────
-  function computeAmbientTint(timeOfDay, weather) {
+  function computeAmbientTint(timeOfDay, weather, biome) {
     const base = TIME_TINTS[timeOfDay] || TIME_TINTS.day;
     const wmod = WEATHER_TINT_MODS[weather] || WEATHER_TINT_MODS.clear;
+    const bmod = BIOME_TINT_MODS[biome] || BIOME_TINT_MODS.city;
 
-    const r = Math.max(0, Math.min(255, base.r + wmod.r));
-    const g = Math.max(0, Math.min(255, base.g + wmod.g));
-    const b = Math.max(0, Math.min(255, base.b + wmod.b));
-    const a = Math.min(0.7, base.a * wmod.aMult);
+    const r = Math.max(0, Math.min(255, base.r + wmod.r + bmod.r));
+    const g = Math.max(0, Math.min(255, base.g + wmod.g + bmod.g));
+    const b = Math.max(0, Math.min(255, base.b + wmod.b + bmod.b));
+    const a = Math.min(0.72, base.a * wmod.aMult + bmod.a);
 
     ambientColor = `rgba(${r},${g},${b},${a.toFixed(3)})`;
     ambientAlpha = a;
   }
 
   function setAmbient(timeOfDay, weather, biome) {
-    computeAmbientTint(timeOfDay, weather);
+    computeAmbientTint(timeOfDay, weather, biome);
 
     // Enable shimmer for hot biomes during day
     shimmerEnabled = (biome === 'desert' || biome === 'volcanic') &&
@@ -136,11 +162,11 @@ const Lighting = (function () {
   }
 
   function addExplosionLight(x, y, radius) {
-    return addLight(x, y, Math.max(80, radius * 4), '#FFFF55', 1.0, 400, 0);
+    return addLight(x, y, Math.max(70, radius * 3.5), '#FFB347', 0.95, 320, 0);
   }
 
   function addBananaGlow(x, y) {
-    return addLight(x, y, 20, '#FFFF55', 0.4, 0, 0);
+    return addLight(x, y, 18, '#FFE472', 0.35, 0, 0);
   }
 
   function clearLights() {
@@ -164,7 +190,7 @@ const Lighting = (function () {
   }
 
   // ─── Shadow drawing ──────────────────────────────────────────────────────
-  function drawShadows(ctx, buildings, gorillas, gorillaVisible, timeOfDay, GORILLA_W, GORILLA_H, LOGICAL_H) {
+  function drawShadows(ctx, buildings, collapsedBuildings, gorillas, gorillaVisible, timeOfDay, GORILLA_W, GORILLA_H, LOGICAL_H) {
     if (quality < 1) return; // skip on low quality
 
     let shadowAngle, shadowLen, shadowAlpha;
@@ -194,7 +220,9 @@ const Lighting = (function () {
     ctx.fillStyle = `rgba(0,0,0,${shadowAlpha})`;
 
     // Building shadows
-    for (const b of buildings) {
+    for (let i = 0; i < buildings.length; i++) {
+      if (collapsedBuildings && collapsedBuildings.has && collapsedBuildings.has(i)) continue;
+      const b = buildings[i];
       const bh = LOGICAL_H - b.y;
       const shLen = bh * shadowLen;
       const shX = shadowAngle * shLen;
@@ -206,15 +234,6 @@ const Lighting = (function () {
       ctx.fill();
     }
 
-    // Gorilla shadows
-    for (let gi = 0; gi < gorillas.length; gi++) {
-      if (!gorillaVisible[gi]) continue;
-      const g = gorillas[gi];
-      const gh = GORILLA_H;
-      const shLen = gh * shadowLen * 0.5;
-      const shX = shadowAngle * shLen;
-      ctx.fillRect(g.x + shX, g.y + gh, GORILLA_W + Math.abs(shX), 3);
-    }
   }
 
   // ─── Update (called each frame) ─────────────────────────────────────────
@@ -251,6 +270,10 @@ const Lighting = (function () {
     if (ambientAlpha > 0.001) {
       mainCtx.fillStyle = ambientColor;
       mainCtx.fillRect(0, 0, W, H);
+      mainCtx.fillStyle = 'rgba(255,255,255,0.03)';
+      for (let y = 0; y < H; y += 8) {
+        mainCtx.fillRect(0, y, W, 1);
+      }
     }
 
     // 2. Dynamic light sources (additive blend)
@@ -275,7 +298,11 @@ const Lighting = (function () {
         const alpha = Math.min(1, intensity);
         const grad = lightCtx.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.radius);
         grad.addColorStop(0, withAlpha(l.color, alpha));
-        grad.addColorStop(0.5, withAlpha(l.color, alpha * 0.4));
+        grad.addColorStop(0.12, withAlpha(l.color, alpha));
+        grad.addColorStop(0.13, withAlpha(l.color, alpha * 0.55));
+        grad.addColorStop(0.45, withAlpha(l.color, alpha * 0.55));
+        grad.addColorStop(0.46, withAlpha(l.color, alpha * 0.18));
+        grad.addColorStop(0.78, withAlpha(l.color, alpha * 0.18));
         grad.addColorStop(1, withAlpha(l.color, 0));
         lightCtx.fillStyle = grad;
         lightCtx.fillRect(l.x - l.radius, l.y - l.radius, l.radius * 2, l.radius * 2);
@@ -294,16 +321,27 @@ const Lighting = (function () {
       mainCtx.fillRect(0, 0, W, H);
     }
 
+    mainCtx.fillStyle = 'rgba(0,0,0,0.08)';
+    mainCtx.fillRect(0, 0, W, 6);
+    mainCtx.fillRect(0, H - 6, W, 6);
+    mainCtx.fillRect(0, 0, 6, H);
+    mainCtx.fillRect(W - 6, 0, 6, H);
+
     // 4. Heat shimmer (simplified pixel displacement effect)
     if (shimmerEnabled && quality >= 2) {
       const shimmerH = Math.floor(H * 0.3);
       const yStart = H - shimmerH;
+      if (effectCtx && effectCanvas) {
+        effectCtx.clearRect(0, 0, W, H);
+        effectCtx.drawImage(mainCtx.canvas, 0, 0);
+      }
       // Draw subtle wavy distortion lines
       mainCtx.save();
       mainCtx.globalAlpha = 0.03;
       for (let y = yStart; y < H; y += 4) {
         const offset = Math.sin(shimmerTime * 3 + y * 0.1) * 2;
-        mainCtx.drawImage(mainCtx.canvas, 0, y, W, 2, offset, y, W, 2);
+        const source = effectCanvas || mainCtx.canvas;
+        mainCtx.drawImage(source, 0, y, W, 2, offset, y, W, 2);
       }
       mainCtx.globalAlpha = 1;
       mainCtx.restore();

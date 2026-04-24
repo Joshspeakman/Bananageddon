@@ -2,11 +2,30 @@
 
 Browser-based rooftop banana artillery inspired by QBasic Gorillas. The server owns match state, physics, scoring, lobby rules, and reconnect windows; the client handles rendering, audio, HUD, and input.
 
+## Visual Refresh
+
+The current build includes a Genesis-inspired art-direction pass without abandoning the original chunky sprite readability.
+
+Highlights:
+
+- Biome-specific stage palettes with harder color ramps
+- Chunkier skyline/parallax silhouettes per biome
+- Shaded foreground buildings with stronger outlines and roof bands
+- Monkey sprites now use the selected "Arcade Hunch" silhouette: hunched shoulders, longer arms, and a squarer arcade-style face while staying chunky
+- Gorilla, banana, trail, and explosion sprites tuned toward a louder 16-bit look
+- Foreground sun/moon rendering without the doubled background orb artifact
+- Terrain twinkles now respect cratered/destroyed building pixels
+- Broadcast-style HUD/menu reskin with bolder cartridge-era chrome
+- Less misty lighting/particle treatment so the scene stays crisp
+- Much denser biome background motion and event activity so every map feels busier
+
 ## Install
 
 ```bash
 npm install
 ```
+
+Node.js `16.17+` is recommended. The server uses modern runtime APIs such as `crypto.randomUUID()`.
 
 ## Run
 
@@ -30,6 +49,7 @@ The server prints `localhost` and LAN URLs. Open one of those URLs in a browser 
 - If more players are connected than the selected mode supports, the server blocks the start and sends an error to the whole lobby.
 - During an active round, only reconnecting players may rejoin. Brand-new joins are rejected until the match returns to `waiting` or `matchOver`.
 - Active-match reconnects are token-based and remain valid for 60 seconds after disconnect.
+- Host controls follow the current host slot, not always player 1. If the host times out in `waiting`, host rights move to the next connected player.
 
 ## Mode Matrix
 
@@ -59,7 +79,11 @@ Key files:
 
 - `shared.js`: shared mode/settings definitions used by both client and server
 - `server.js`: authoritative lobby, match, scoring, and physics logic
-- `game.js`: client renderer, HUD, setup flow, and audio/input handling
+- `game.js`: client renderer, foreground palettes/sprites/effects, HUD, setup flow, and audio/input handling
+- `background.js`: stage sky banding, distant biome silhouettes, ambient background events
+- `lighting.js`: ambient tint, stepped light falloff, flashes, shimmer, caustics
+- `particles.js`: weather, sparks, smoke, confetti, and other pixel-style particles
+- `styles.css`: cartridge/broadcast UI skin
 - `tests/server-regression.js`: end-to-end server regression coverage
 
 Run the regression suite with:
@@ -67,6 +91,8 @@ Run the regression suite with:
 ```bash
 npm test
 ```
+
+That command runs the WebSocket regression suite plus syntax checks for the browser-facing modules.
 
 Current automated coverage includes:
 
@@ -76,6 +102,10 @@ Current automated coverage includes:
 - over-capacity lobby blocking
 - rejecting brand-new joins during active play
 - host-only `clearMatch` enforcement
+- preserving reconnect reservations in `waiting`
+- promoting a new host after timeout
+- `/status` visibility for reserved reconnect slots
+- reconnect state sync preserving remaining turn time
 
 ## Limitations
 
@@ -83,3 +113,4 @@ Current automated coverage includes:
 - No AI opponent or bot fill.
 - Intended for desktop browsers.
 - Internet play is possible only if you handle networking yourself, such as port forwarding or a reverse proxy.
+- Reconnect tokens are origin-checked server-side, but real transport security still requires HTTPS/WSS if you expose the game outside a trusted LAN.

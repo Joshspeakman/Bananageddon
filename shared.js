@@ -116,8 +116,36 @@
     friendlyFire: true,
     shakeIntensity: 'normal',
     trailStyle: 'dotted',
-    crtOverlay: false,
+    crtOverlay: true,
   };
+
+  const PLAYER_COLOR_DEFAULTS = ['#9D52FF', '#FF8A4C', '#55E9FF', '#A6FF55'];
+
+  function getDefaultPlayerColor(slotIdx = 0) {
+    const idx = Math.abs(Math.floor(Number(slotIdx) || 0)) % PLAYER_COLOR_DEFAULTS.length;
+    return PLAYER_COLOR_DEFAULTS[idx];
+  }
+
+  function sanitizePlayerColor(value, fallback = PLAYER_COLOR_DEFAULTS[0]) {
+    const safeFallback = /^#[0-9A-F]{6}$/i.test(fallback || '')
+      ? fallback.toUpperCase()
+      : PLAYER_COLOR_DEFAULTS[0];
+
+    if (typeof value !== 'string') return safeFallback;
+
+    const trimmed = value.trim();
+    const shortMatch = trimmed.match(/^#([0-9a-fA-F]{3})$/);
+    if (shortMatch) {
+      return `#${shortMatch[1].split('').map(ch => ch + ch).join('')}`.toUpperCase();
+    }
+
+    const longMatch = trimmed.match(/^#([0-9a-fA-F]{6})$/);
+    if (longMatch) {
+      return `#${longMatch[1]}`.toUpperCase();
+    }
+
+    return safeFallback;
+  }
 
   const SETTINGS_LIMITS = {
     roundsToWin: { min: 1, max: 20 },
@@ -136,6 +164,9 @@
     MAP_SIZES,
     MODE_CONFIGS,
     DEFAULT_SETTINGS,
+    PLAYER_COLOR_DEFAULTS,
+    getDefaultPlayerColor,
+    sanitizePlayerColor,
     SETTINGS_LIMITS,
     VALID_GAME_MODES: Object.keys(MODE_CONFIGS),
   };

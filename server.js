@@ -15,9 +15,12 @@ const {
   MODE_CONFIGS,
   SETTINGS_LIMITS,
   VALID_GAME_MODES,
+  getDefaultPlayerColor,
+  sanitizePlayerColor,
 } = Shared;
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;
+const DISCONNECT_TIMEOUT_MS = Math.max(100, Number(process.env.DISCONNECT_TIMEOUT_MS) || 60000);
 
 // ─── Seeded PRNG (mulberry32) ────────────────────────────────────────────────
 function mulberry32(seed) {
@@ -37,8 +40,8 @@ const BIOME_CONFIGS = {
   arctic:      { windMult: 1.5, gravMult: 1.0 },
   jungle:      { windMult: 0.7, gravMult: 1.0 },
   volcanic:    { windMult: 1.0, gravMult: 1.2 },
-  moon:        { windMult: 0.0, gravMult: 0.17 },
-  underwater:  { windMult: 0.8, gravMult: 0.4 },
+  moon:        { windMult: 0.0, gravMult: 0.35 },
+  underwater:  { windMult: 0.8, gravMult: 0.65 },
   postapoc:    { windMult: 1.4, gravMult: 1.0 },
   cyberpunk:   { windMult: 1.0, gravMult: 1.0 },
 };
@@ -160,13 +163,13 @@ const DEFAULT_EXPLOSION_RADIUS = 30;
 const MAX_EXPLOSIONS = 200;
 
 // ─── Turret constants ───────────────────────────────────────────────────────
-const TURRET_CHARGES_PER_MATCH = 2;
+const TURRET_CHARGES_PER_LIFE = 3;
 const TURRET_FIRE_RANGE = 180;
 const TURRET_FIRE_RANGE_SQ = TURRET_FIRE_RANGE * TURRET_FIRE_RANGE;
 const TURRET_HIT_PROB_PER_TICK = 0.05;
 const TURRET_COSMETIC_MISS_EVERY = 3;   // sim ticks between cosmetic tracer bursts (lower = more shots)
 const TURRET_COSMETIC_MISS_COUNT = 2;   // how many miss tracers to fire per burst
-const TURRET_LIFETIME_TURNS = 2;        // alive for this many opponent turns after deploy
+const TURRET_LIFETIME_TURNS = 4;        // alive for this many opponent turns after deploy
 const TURRET_W = 16;
 const TURRET_H = 16;
 const MAX_TURRET_LAUNCH_V = 140;        // heavier than banana (cap is ~200)
@@ -181,23 +184,49 @@ const MIME = {
   '.mp3':  'audio/mpeg',
 };
 
-const ALLOWED_FILES = new Set(['index.html', 'game.js', 'net.js', 'shared.js', 'styles.css', 'lighting.js', 'particles.js', 'background.js', 'robotic.mp3', 'Gameplay BG.mp3', 'Victory Screen.mp3', 'reganati-swag-national-anthem-414505.mp3', 'reganati-fartysoup-mcdouble-414392.mp3', 'reganati-singularity-funkyglitchy-videogame-music-512162.mp3', 'reganati-fruity-dx10-synth-ringtone-411349.mp3', 'reganati-fartysoup-mctriple-414508.mp3', 'freesound_community-gasp-6253.mp3']);
+const ALLOWED_FILES = new Set([
+  'index.html',
+  'ui-mockups.html',
+  'game.js',
+  'net.js',
+  'shared.js',
+  'styles.css',
+  'lighting.js',
+  'particles.js',
+  'background.js',
+  'robotic.mp3',
+  'Gameplay BG.mp3',
+  'Victory Screen.mp3',
+  'reganati-swag-national-anthem-414505.mp3',
+  'reganati-fartysoup-mcdouble-414392.mp3',
+  'reganati-singularity-funkyglitchy-videogame-music-512162.mp3',
+  'reganati-fruity-dx10-synth-ringtone-411349.mp3',
+  'reganati-fartysoup-mctriple-414508.mp3',
+  'freesound_community-gasp-6253.mp3',
+  'freesound_community-hq-explosion-6288.mp3',
+  'freesound_community-clean-machine-gun-burst-98224.mp3',
+  'freesound_community-beep-warning-6387.mp3',
+  'u_cs6o615ob2-mono-505080.mp3',
+]);
 
 const httpServer = http.createServer((req, res) => {
   // /status endpoint — returns match availability info
   if (req.url === '/status') {
-    const hasPlayers = match.players.some(p => p && p.connected);
-    const playerCount = match.players.filter(p => p && p.connected).length;
+    const connectedPlayers = match.players.filter(p => p && p.connected);
+    const reservedPlayers = match.players.filter((p, i) => p && !p.connected && match.disconnectTimers[i]);
     const playerNames = match.players
-      .filter(p => p && p.connected)
+      .filter((p, i) => p && (p.connected || match.disconnectTimers[i]))
       .map(p => p.name);
     const body = JSON.stringify({
-      active: hasPlayers,
+      active: connectedPlayers.length > 0 || reservedPlayers.length > 0,
       state: match.state,
-      playerCount,
+      playerCount: connectedPlayers.length,
+      connectedPlayerCount: connectedPlayers.length,
+      reservedPlayerCount: reservedPlayers.length,
       playerNames,
       gameMode: match.settings.gameMode,
       mapSize: match.settings.mapSize,
+      hostPlayer: getHostPlayerNumber(),
     });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(body);
@@ -235,7 +264,18 @@ const httpServer = http.createServer((req, res) => {
 });
 
 // ─── WebSocket server ────────────────────────────────────────────────────────
-const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+// Reject cross-origin WebSocket connections to prevent CSRF-via-WebSocket.
+// Allow: same-origin browser connections (Origin matches Host header).
+// Allow: no Origin header (non-browser clients, reconnect after page reload).
+const wss = new WebSocketServer({
+  server: httpServer,
+  path: '/ws',
+  verifyClient: ({ origin, req }) => {
+    if (!origin) return true; // non-browser client — allow
+    const host = req.headers.host || `localhost:${PORT}`;
+    return origin === `http://${host}` || origin === `https://${host}`;
+  },
+});
 
 // ─── Default settings (classic) ─────────────────────────────────────────────
 const CLASSIC_SETTINGS = { ...DEFAULT_SETTINGS };
@@ -251,6 +291,7 @@ function createMatch() {
     rosterSize: 0,
     currentPlayer: 1,
     state: 'waiting',
+    starting: false,
     citySeed: 0,
     buildings: [],
     gorillas: [],
@@ -267,8 +308,16 @@ function createMatch() {
     roundWeather: 'clear',
     roundTimeOfDay: 'day',
     turnStartTime: 0,
+    turnTimerDeadline: 0,
+    turnTimeRemainingMs: 0,
     turnTimerInterval: null,
     weatherTickInterval: null,
+    pause: {
+      active: false,
+      byPlayer: 0,
+      byName: '',
+    },
+    deferredGameplayTimers: new Set(),
     stats: [
       { shots: 0, hits: 0, nearMisses: 0, longestShot: 0, fastestBanana: 0 },
       { shots: 0, hits: 0, nearMisses: 0, longestShot: 0, fastestBanana: 0 },
@@ -285,9 +334,16 @@ function createMatch() {
     missStreak: [0, 0, 0, 0],
     chatTimes: [[], [], [], []],
     turrets: [],
-    turretCharges: [TURRET_CHARGES_PER_MATCH, TURRET_CHARGES_PER_MATCH, TURRET_CHARGES_PER_MATCH, TURRET_CHARGES_PER_MATCH],
+    turretCharges: [TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE],
+    fireInProgress: false,
     turnNumber: 0,
+    currentTurnId: 0,
+    sunHitsThisRound: 0,
+    playerSunHits: [0, 0, 0, 0],
+    sunRetaliating: null,
+    sunAttackInProgress: false,
     gauntletLevel: 0,
+    matchOverSummary: null,
   };
 }
 
@@ -325,6 +381,35 @@ function getConnectedPlayerNames() {
   return match.players
     .filter(p => p?.connected)
     .map(p => p.name);
+}
+
+function getLobbyPlayerNames() {
+  const count = match.players.reduce((lastIdx, player, idx) => (player ? idx : lastIdx), -1) + 1;
+  return Array.from({ length: Math.max(0, count) }, (_, i) => match.players[i]?.name || `Player ${i + 1}`);
+}
+
+function getPlayerColorsView(count = getActivePlayerCount()) {
+  return Array.from({ length: count }, (_, i) => {
+    const color = match.players[i]?.color;
+    return sanitizePlayerColor(color, getDefaultPlayerColor(i));
+  });
+}
+
+function getLobbyPlayerColors() {
+  const count = match.players.reduce((lastIdx, player, idx) => (player ? idx : lastIdx), -1) + 1;
+  return Array.from({ length: Math.max(0, count) }, (_, i) => {
+    const color = match.players[i]?.color;
+    return sanitizePlayerColor(color, getDefaultPlayerColor(i));
+  });
+}
+
+function getHostPlayerIndex() {
+  return match.players.findIndex(p => p);
+}
+
+function getHostPlayerNumber() {
+  const idx = getHostPlayerIndex();
+  return idx >= 0 ? idx + 1 : 0;
 }
 
 function getActivePlayerCount() {
@@ -410,6 +495,7 @@ function buildRoundStartPayload() {
     currentPlayer: match.currentPlayer,
     scores: getDisplayScores(),
     playerNames: getPlayerNamesView(),
+    playerColors: getPlayerColorsView(),
     playerTeams: getPlayerTeamsView(),
     scoreMode: getScoreMode(),
     teamScores: getScoreMode() === 'team' ? getTeamScores() : null,
@@ -431,7 +517,201 @@ function buildRoundStartPayload() {
     crtOverlay: match.settings.crtOverlay,
     turretCharges: match.turretCharges.slice(0, getActivePlayerCount()),
     gauntletLevel: match.gauntletLevel,
+    hostPlayer: getHostPlayerNumber(),
   };
+}
+
+function buildAssignedPayload(playerIdx, { waiting = match.state === 'waiting' } = {}) {
+  const playerNames = waiting ? getLobbyPlayerNames() : getPlayerNamesView();
+  const playerColors = waiting ? getLobbyPlayerColors() : getPlayerColorsView();
+  return {
+    type: 'assigned',
+    player: playerIdx + 1,
+    playerNames,
+    playerColors,
+    playerTeams: waiting ? [] : getPlayerTeamsView(),
+    scoreMode: getScoreMode(),
+    teamScores: waiting || getScoreMode() !== 'team' ? null : getTeamScores(),
+    activePlayerCount: waiting ? playerNames.length : getActivePlayerCount(),
+    token: match.players[playerIdx]?.token,
+    hostPlayer: getHostPlayerNumber(),
+  };
+}
+
+function getTurnRemainingMs() {
+  if (match.settings.turnTimer <= 0) return 0;
+  if (match.turnTimerDeadline > 0) {
+    return Math.max(0, match.turnTimerDeadline - Date.now());
+  }
+  return Math.max(0, Number(match.turnTimeRemainingMs) || 0);
+}
+
+function isGameplayPaused() {
+  return !!match.pause?.active;
+}
+
+// Guard against stale switchTurn() calls (e.g. multiple cluster bananas each
+// scheduling a turn switch). Captures the current turn-ID so that only the
+// FIRST callback that fires for this turn actually runs switchTurn(); all
+// later callbacks see a higher ID and skip silently.
+function scheduleGuardedSwitchTurn(delayMs) {
+  const expectedId = match.currentTurnId;
+  scheduleGameplayAction(() => {
+    if (match.currentTurnId === expectedId) switchTurn();
+  }, delayMs);
+}
+
+function getTerrainY(x) {
+  for (const b of match.buildings) {
+    if (x >= b.x && x <= b.x + b.w) return b.y;
+  }
+  return getMapConfig().h;
+}
+
+function findOpponentOf(targetIdx) {
+  const activeCount = getActivePlayerCount();
+  for (let i = 0; i < activeCount; i++) {
+    if (i !== targetIdx && getTeamIndexForSlot(i) !== getTeamIndexForSlot(targetIdx)) return i;
+  }
+  for (let i = 0; i < activeCount; i++) {
+    if (i !== targetIdx) return i;
+  }
+  return 0;
+}
+
+function handleSunHit(playerIdx) {
+  match.sunHitsThisRound++;
+  match.playerSunHits[playerIdx] = (match.playerSunHits[playerIdx] || 0) + 1;
+  const totalHits = match.sunHitsThisRound;
+
+  let angerLevel = 0;
+  if (totalHits >= 6)      angerLevel = 3; // furious
+  else if (totalHits >= 4) angerLevel = 2; // angry
+  else if (totalHits >= 2) angerLevel = 1; // annoyed
+
+  broadcast({ type: 'sunAngry', angerLevel, totalHits });
+
+  if (totalHits >= 3 && !match.sunRetaliating) {
+    const roll = Math.random();
+    let punishType;
+    if (roll < 0.35)      punishType = 'bounceback';
+    else if (roll < 0.55) punishType = 'windblast';
+    else if (roll < 0.75) punishType = 'meteor';
+    else                  punishType = 'flare';
+    match.sunRetaliating = { type: punishType, targetPlayerIdx: playerIdx };
+    broadcast({ type: 'sunPunish', punishType });
+  }
+}
+
+function scheduleGameplayAction(action, delayMs) {
+  let timer = null;
+  const run = () => {
+    if (match.state !== 'playing') return;
+    if (isGameplayPaused()) {
+      timer = setTimeout(() => {
+        match.deferredGameplayTimers.delete(timer);
+        run();
+      }, 100);
+      match.deferredGameplayTimers.add(timer);
+      return;
+    }
+    action();
+  };
+
+  timer = setTimeout(() => {
+    match.deferredGameplayTimers.delete(timer);
+    run();
+  }, delayMs);
+  match.deferredGameplayTimers.add(timer);
+  return timer;
+}
+
+function buildPauseStatePayload() {
+  return {
+    type: 'pauseState',
+    paused: isGameplayPaused(),
+    pausedByPlayer: match.pause?.byPlayer || 0,
+    pausedByName: match.pause?.byName || '',
+    turnRemainingMs: getTurnRemainingMs(),
+  };
+}
+
+function clearPauseState() {
+  if (!match.pause) {
+    match.pause = { active: false, byPlayer: 0, byName: '' };
+    return;
+  }
+  match.pause.active = false;
+  match.pause.byPlayer = 0;
+  match.pause.byName = '';
+}
+
+function broadcastPauseState() {
+  broadcast(buildPauseStatePayload());
+}
+
+function setGameplayPaused(paused, playerIdx) {
+  if (match.state !== 'playing') return false;
+
+  if (paused) {
+    if (isGameplayPaused()) return false;
+    const player = match.players[playerIdx];
+    match.pause.active = true;
+    match.pause.byPlayer = playerIdx + 1;
+    match.pause.byName = player?.name || `Player ${playerIdx + 1}`;
+    stopTurnTimer(true);
+    broadcastPauseState();
+    return true;
+  }
+
+  if (!isGameplayPaused()) return false;
+
+  const remainingMs = getTurnRemainingMs();
+  clearPauseState();
+  broadcastPauseState();
+
+  if (!match.banana && match.bananas.length === 0 && remainingMs > 0) {
+    startTurnTimer(remainingMs);
+  }
+
+  return true;
+}
+
+function buildStateSyncPayload() {
+  const payload = {
+    ...buildRoundStartPayload(),
+    type: 'stateSync',
+    state: match.state,
+    paused: isGameplayPaused(),
+    pausedByPlayer: match.pause?.byPlayer || 0,
+    pausedByName: match.pause?.byName || '',
+    explosions: match.explosions.map(exp => ({ x: exp.x, y: exp.y, radius: exp.radius })),
+    collapsedBuildings: Array.from(match.collapsedBuildingIndices || []),
+    banana: match.banana ? {
+      x: match.banana.x,
+      y: match.banana.y,
+      frame: match.banana.frame || 0,
+      type: match.banana.type || 'standard',
+    } : null,
+    clusterBananas: match.bananas.map(b => ({ idx: b.clusterIdx, x: b.x, y: b.y })),
+    serverTimeMs: Date.now(),
+    turrets: match.turrets.map(t => ({
+      id: t.id,
+      ownerIdx: t.ownerIdx,
+      x: t.x,
+      y: t.y,
+      cx: t.cx,
+      cy: t.cy,
+      expireTurn: t.expireTurn,
+    })),
+    turnRemainingMs: getTurnRemainingMs(),
+  };
+
+  if (match.state === 'matchOver' && match.matchOverSummary) {
+    payload.matchOver = { ...match.matchOverSummary };
+  }
+
+  return payload;
 }
 
 function getMapConfig() {
@@ -463,7 +743,9 @@ function sendWaitingState() {
     requiredPlayers: getRequiredPlayerCount(),
     supportedPlayers: getSupportedPlayerCount(),
     connectedPlayers: getConnectedPlayerCount(),
-    playerNames: getConnectedPlayerNames(),
+    playerNames: getLobbyPlayerNames(),
+    playerColors: getLobbyPlayerColors(),
+    hostPlayer: getHostPlayerNumber(),
   };
 
   for (let i = 0; i < match.players.length; i++) {
@@ -545,8 +827,9 @@ function newRound() {
   // Wind
   let effectiveWindIntensity = match.settings.windIntensity;
   if (mode === 'gauntlet') {
-    const gauntletWind = ['calm', 'normal', 'gusty', 'storm'];
-    effectiveWindIntensity = gauntletWind[Math.min(gauntletWind.length - 1, Math.floor(match.gauntletLevel / 2))];
+    // Smoother escalation: calm L0, normal L1-2, gusty L3-4, storm L5+
+    const gauntletWind = ['calm', 'normal', 'normal', 'gusty', 'gusty', 'storm'];
+    effectiveWindIntensity = gauntletWind[Math.min(gauntletWind.length - 1, match.gauntletLevel)];
   }
   const windIntensityMult = { calm: 0.3, normal: 1.0, gusty: 1.5, storm: 2.0 }[effectiveWindIntensity] || 1.0;
   const effectiveWindMult = biomeCfg.windMult * weatherCfg.windMult * windIntensityMult;
@@ -563,8 +846,15 @@ function newRound() {
   match.banana = null;
   match.bananas = [];
   match.turrets = [];
+  match.turretCharges = [TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE];
+  match.fireInProgress = false;
   match.collapsedBuildingIndices = new Set();
+  match.matchOverSummary = null;
   match.turnNumber = 0;
+  match.sunHitsThisRound = 0;
+  match.playerSunHits = [0, 0, 0, 0];
+  match.sunRetaliating = null;
+  match.sunAttackInProgress = false;
   // Alternate starting player across rounds so P1 doesn't always open
   {
     if (isSoloTurnMode(mode)) {
@@ -580,17 +870,20 @@ function newRound() {
   match.panicSent = [false, false, false, false];
   match.artilleryShots = 0;
   match.windShearFlipped = false;
+  match.turnTimeRemainingMs = 0;
+  match.turnTimerDeadline = 0;
+  clearPauseState();
 
   // Clear previous intervals
   if (match.weatherTickInterval) { clearInterval(match.weatherTickInterval); match.weatherTickInterval = null; }
   if (match.erosionInterval) { clearInterval(match.erosionInterval); match.erosionInterval = null; }
-  if (match.turnTimerInterval) { clearInterval(match.turnTimerInterval); match.turnTimerInterval = null; }
+  stopTurnTimer(false);
 
   // Dynamic wind for storm/sandstorm weather
   if (weatherCfg.dynamicWind) {
     const interval = (weatherCfg.windChangeInterval || 5) * 1000;
     match.weatherTickInterval = setInterval(() => {
-      if (match.state !== 'playing') return;
+      if (match.state !== 'playing' || isGameplayPaused()) return;
       match.wind = match.baseWind + (Math.random() * 10 - 5) * windIntensityMult;
       match.wind = Math.max(-30, Math.min(30, match.wind));
       broadcast({ type: 'weatherTick', wind: match.wind });
@@ -600,7 +893,7 @@ function newRound() {
   // Acid rain erosion
   if (match.roundWeather === 'acidrain') {
     match.erosionInterval = setInterval(() => {
-      if (match.state !== 'playing') return;
+      if (match.state !== 'playing' || isGameplayPaused()) return;
       const erodeRng = mulberry32((Date.now() & 0xFFFFFF) + match.citySeed);
       const erosions = [];
       for (let i = 0; i < 3; i++) {
@@ -624,21 +917,52 @@ function newRound() {
   startTurnTimer();
 }
 
-function startTurnTimer() {
-  if (match.turnTimerInterval) { clearInterval(match.turnTimerInterval); match.turnTimerInterval = null; }
+function stopTurnTimer(preserveRemaining = false) {
+  if (match.turnTimerInterval) {
+    clearInterval(match.turnTimerInterval);
+    match.turnTimerInterval = null;
+  }
+
+  if (preserveRemaining) {
+    match.turnTimeRemainingMs = getTurnRemainingMs();
+  } else {
+    match.turnTimeRemainingMs = 0;
+  }
+
+  match.turnTimerDeadline = 0;
+  match.turnStartTime = 0;
+}
+
+function startTurnTimer(remainingMs = null) {
   if (match.settings.turnTimer <= 0) return;
+  if (isGameplayPaused()) {
+    if (remainingMs != null) {
+      match.turnTimeRemainingMs = Math.max(1, Math.ceil(Number(remainingMs) || 0));
+    }
+    return;
+  }
+  stopTurnTimer(false);
+
+  const initialRemaining = remainingMs == null
+    ? match.settings.turnTimer * 1000
+    : Math.max(1, Math.ceil(Number(remainingMs) || 0));
 
   match.turnStartTime = Date.now();
+  match.turnTimeRemainingMs = initialRemaining;
+  match.turnTimerDeadline = match.turnStartTime + initialRemaining;
+
   match.turnTimerInterval = setInterval(() => {
     if (match.state !== 'playing') {
-      clearInterval(match.turnTimerInterval);
-      match.turnTimerInterval = null;
+      stopTurnTimer(false);
       return;
     }
-    const elapsed = (Date.now() - match.turnStartTime) / 1000;
-    if (elapsed >= match.settings.turnTimer) {
-      clearInterval(match.turnTimerInterval);
-      match.turnTimerInterval = null;
+    if (isGameplayPaused()) return;
+
+    const remaining = Math.max(0, match.turnTimerDeadline - Date.now());
+    match.turnTimeRemainingMs = remaining;
+
+    if (remaining <= 0) {
+      stopTurnTimer(false);
       if (!match.banana) {
         const rng = mulberry32(Date.now() & 0xFFFFFF);
         const angle = Math.floor(rng() * 180);
@@ -646,10 +970,24 @@ function startTurnTimer() {
         startBanana(match.currentPlayer - 1, angle, velocity);
       }
     }
-  }, 1000);
+  }, 250);
 }
 
 function switchTurn() {
+  // Invalidate any stale scheduleGuardedSwitchTurn callbacks before doing anything.
+  match.currentTurnId = (match.currentTurnId || 0) + 1;
+  match.fireInProgress = false;
+
+  // Sun punishment: intercept the turn switch to launch an attack first.
+  if (match.sunRetaliating && !match.sunAttackInProgress) {
+    const ret = match.sunRetaliating;
+    match.sunRetaliating = null;
+    match.sunAttackInProgress = true;
+    launchSunAttack(ret);
+    return;
+  }
+  match.sunAttackInProgress = false;
+
   const mode = match.settings.gameMode;
 
   if (mode === 'artillery') {
@@ -682,6 +1020,130 @@ function switchTurn() {
   broadcast(turnMsg);
 
   startTurnTimer();
+}
+
+// ─── Sun punishment attack ───────────────────────────────────────────────────
+function launchSunAttack(punishment) {
+  const mapCfg = getMapConfig();
+  const W = mapCfg.w;
+  const H = mapCfg.h;
+  const SUN_X = W / 2;
+  const SUN_Y = 68;
+
+  broadcast({ type: 'sunAttacking', punishType: punishment.type });
+
+  if (punishment.type === 'bounceback') {
+    const targetIdx = punishment.targetPlayerIdx;
+    const gorilla = match.gorillas[targetIdx];
+    if (!gorilla) {
+      match.sunAttackInProgress = false;
+      scheduleGuardedSwitchTurn(300);
+      return;
+    }
+
+    // Accuracy scales with hit count — perfect only at 15+ hits
+    const totalHits = match.sunHitsThisRound;
+    const maxOffset = 90;
+    const inaccuracy = totalHits >= 15 ? 0 : maxOffset * Math.max(0, 1 - (totalHits - 3) / 12);
+    const aimX = gorilla.x + GORILLA_W / 2 + (Math.random() - 0.5) * 2 * inaccuracy;
+    const aimY = gorilla.y + GORILLA_H / 2 + (Math.random() - 0.5) * inaccuracy * 0.4;
+
+    const gcx = gorilla.x + GORILLA_W / 2;
+    const gcy = gorilla.y + GORILLA_H / 2;
+    const dx = aimX - SUN_X;
+    const dy = aimY - SUN_Y;
+    const biomeCfg = BIOME_CONFIGS[match.roundBiome] || BIOME_CONFIGS.city;
+    const gravity = BASE_GRAVITY * match.settings.gravityMultiplier * biomeCfg.gravMult;
+    const T = 2.5;
+    const vx = dx / T;
+    const vy = (dy - 0.5 * gravity * T * T) / T;
+
+    match.banana = {
+      x: SUN_X, y: SUN_Y,
+      vx, vy,
+      tick: 0, frame: 0,
+      distanceTraveled: 0,
+      sunHitSent: true,
+      type: 'standard',
+      bouncesLeft: 0,
+      hasClusterSplit: false,
+      launchVelocity: Math.sqrt(vx * vx + vy * vy),
+      isSunAttack: true,
+      sunAttackTargetIdx: targetIdx,
+    };
+
+    broadcast({ type: 'throwAnim', player: 0, angle: 0, velocity: 0, bananaType: 'standard', isSunAttack: true });
+    scheduleGameplayAction(() => { if (match.banana) simulateBanana(); }, 600);
+
+  } else if (punishment.type === 'flare') {
+    // Solar barrage: 5 sunflare projectiles fan out from the sun across the map
+    const flareCount = 5;
+    const flareRadius = 18;
+    broadcast({ type: 'throwAnim', player: 0, angle: 0, velocity: 0, bananaType: 'sunflare', isSunAttack: true });
+    broadcast({ type: 'clusterSplit', x: SUN_X, y: SUN_Y });
+
+    for (let i = 0; i < flareCount; i++) {
+      const fraction = (i - (flareCount - 1) / 2) / ((flareCount - 1) / 2); // -1 to +1
+      const spreadVx = fraction * 90;    // horizontal spread across map
+      const baseVy = 55 + Math.abs(fraction) * 20; // centre falls fastest
+      match.bananas.push({
+        x: SUN_X, y: SUN_Y,
+        vx: spreadVx, vy: baseVy,
+        tick: 0, frame: 0,
+        distanceTraveled: 0,
+        sunHitSent: true,
+        type: 'sunflare',
+        bouncesLeft: 0,
+        hasClusterSplit: true,
+        clusterIdx: i,
+        launchVelocity: Math.sqrt(spreadVx * spreadVx + baseVy * baseVy),
+        isSunAttack: true,
+      });
+    }
+    for (const fb of match.bananas) {
+      simulateClusterBanana(fb, flareRadius, mapCfg);
+    }
+
+  } else if (punishment.type === 'windblast') {
+    const targetIdx = punishment.targetPlayerIdx;
+    match.wind = getThrowSide(targetIdx) > 0 ? -30 : 30;
+    match.baseWind = match.wind;
+    broadcast({ type: 'weatherTick', wind: match.wind });
+    match.sunAttackInProgress = false;
+    scheduleGuardedSwitchTurn(800);
+
+  } else if (punishment.type === 'meteor') {
+    for (let i = 0; i < 3; i++) {
+      const mx = Math.floor(Math.random() * (W - 80)) + 40;
+      const mRadius = 25 + Math.floor(Math.random() * 15);
+      scheduleGameplayAction(() => {
+        const mY = getTerrainY(mx); // land on building tops, not the map floor
+        broadcast({ type: 'meteor', x: mx, y: mY, radius: mRadius });
+        scheduleGameplayAction(() => {
+          const exp = { x: mx, y: mY, radius: mRadius };
+          match.explosions.push(exp);
+          if (match.explosions.length > MAX_EXPLOSIONS) match.explosions.shift();
+          broadcast({ type: 'explosion', x: exp.x, y: exp.y, radius: exp.radius });
+          destroyTurretsInBlast(mx, mY, mRadius);
+          for (let gi = 0; gi < match.gorillas.length; gi++) {
+            const g = match.gorillas[gi];
+            const gcx = g.x + GORILLA_W / 2;
+            const gcy = g.y + GORILLA_H / 2;
+            const ddx = gcx - mx;
+            const ddy = gcy - mY;
+            if (ddx * ddx + ddy * ddy <= mRadius * mRadius) {
+              const forceScorerIdx = findOpponentOf(gi);
+              scheduleGameplayAction(() => determineWinnerAndScore(gi, gcx, gcy, forceScorerIdx), 100);
+            }
+          }
+        }, 400);
+      }, 400 + i * 600);
+    }
+    scheduleGameplayAction(() => {
+      match.sunAttackInProgress = false;
+      if (match.state === 'playing') scheduleGuardedSwitchTurn(300);
+    }, 2500);
+  }
 }
 
 // ─── Banana physics simulation ──────────────────────────────────────────────
@@ -733,7 +1195,7 @@ function startBanana(playerIdx, angle, velocity) {
     bananaType,
   });
 
-  setTimeout(() => {
+  scheduleGameplayAction(() => {
     if (match.banana) simulateBanana();
   }, 300);
 }
@@ -754,6 +1216,7 @@ function simulateBanana() {
       clearInterval(simInterval);
       return;
     }
+    if (isGameplayPaused()) return;
 
     // Chaos mode: randomize physics every 2 seconds
     if (match.settings.gameMode === 'chaos' && sim.tick > 0 && sim.tick % (SIM_HZ * 2) === 0) {
@@ -771,7 +1234,7 @@ function simulateBanana() {
     // Cinematic proximity check — triggers time dilation once per shot when banana
     // approaches a non-shooter gorilla. Applied via effectiveDT below.
     if (!sim._cinematicActive) {
-      const CINEMATIC_TRIG_SQ = 180 * 180;
+      const CINEMATIC_TRIG_SQ = 100 * 100;
       for (let gi = 0; gi < match.gorillas.length; gi++) {
         if (gi === match.currentPlayer - 1) continue;
         const g = match.gorillas[gi];
@@ -823,7 +1286,7 @@ function simulateBanana() {
         clearInterval(simInterval);
         match.banana = null;
         recordMiss();
-        setTimeout(() => switchTurn(), 500);
+        scheduleGuardedSwitchTurn(500);
         return;
       }
 
@@ -841,10 +1304,13 @@ function simulateBanana() {
       clearInterval(simInterval);
       match.banana = null;
       const clusterRadius = 15;
-      for (let i = 0; i < 3; i++) {
-        const spreadAngle = (i - 1) * 0.3;
-        const cvx = sim.vx + Math.cos(spreadAngle) * 20;
-        const cvy = sim.vy + Math.sin(spreadAngle) * 15;
+      // 9-part spread: fan from -100° to +100°, each sub-banana kicked strongly
+      // upward so they arc high before raining down.
+      for (let i = 0; i < 9; i++) {
+        const fraction = (i - 4) / 4; // -1 to +1
+        const spreadAngle = fraction * (Math.PI * 0.56); // ±100° fan
+        const cvx = sim.vx * 0.25 + Math.cos(spreadAngle) * 34;
+        const cvy = sim.vy - 58 + Math.sin(spreadAngle) * 18; // strong upward kick
         match.bananas.push({
           x: sim.x, y: sim.y,
           vx: cvx, vy: cvy,
@@ -899,7 +1365,7 @@ function simulateBanana() {
         }
       }
       recordMiss();
-      setTimeout(() => switchTurn(), 600);
+      scheduleGuardedSwitchTurn(600);
       return;
     }
 
@@ -908,7 +1374,7 @@ function simulateBanana() {
       clearInterval(simInterval);
       match.banana = null;
       recordMiss();
-      setTimeout(() => switchTurn(), 500);
+      scheduleGuardedSwitchTurn(500);
       return;
     }
 
@@ -926,6 +1392,7 @@ function simulateClusterBanana(cb, clusterRadius, mapCfg) {
 
   const simInterval = setInterval(() => {
     if (match.state !== 'playing') { clearInterval(simInterval); return; }
+    if (isGameplayPaused()) return;
 
     const gravity = BASE_GRAVITY * match.settings.gravityMultiplier * biomeCfg.gravMult;
     cb.vx += match.wind * 0.5 * DT;
@@ -934,6 +1401,18 @@ function simulateClusterBanana(cb, clusterRadius, mapCfg) {
     cb.y += cb.vy * DT;
     cb.tick++;
     stepCount++;
+
+    // Turrets can intercept cluster sub-munitions just like the primary banana
+    if (tickTurretsAgainstBanana(cb)) {
+      clearInterval(simInterval);
+      const idx = match.bananas.indexOf(cb);
+      if (idx >= 0) match.bananas.splice(idx, 1);
+      if (match.bananas.length === 0 && !match.banana) {
+        recordMiss();
+        scheduleGuardedSwitchTurn(500);
+      }
+      return;
+    }
 
     const result = checkBananaCollision(cb, simInterval, stepCount, clusterRadius, mapCfg);
     if (result) {
@@ -948,7 +1427,7 @@ function simulateClusterBanana(cb, clusterRadius, mapCfg) {
       if (idx >= 0) match.bananas.splice(idx, 1);
       if (match.bananas.length === 0 && !match.banana) {
         recordMiss();
-        setTimeout(() => switchTurn(), 500);
+        scheduleGuardedSwitchTurn(500);
       }
       return;
     }
@@ -966,7 +1445,7 @@ function checkBananaCollision(sim, simInterval, stepCount, effectiveRadius, mapC
   const W = mapCfg.w;
   const H = mapCfg.h;
   const SUN_X = W / 2;
-  const SUN_Y = 40;
+  const SUN_Y = 68;
   const SUN_RADIUS = 30;
 
   // 1. Gorilla hit
@@ -978,7 +1457,7 @@ function checkBananaCollision(sim, simInterval, stepCount, effectiveRadius, mapC
 
       if (sim.type === 'dud') {
         broadcast({ type: 'dud', x: bx, y: by, hitPlayer: gi + 1 });
-        setTimeout(() => switchTurn(), 1000);
+        scheduleGuardedSwitchTurn(1000);
         return true;
       }
 
@@ -992,12 +1471,15 @@ function checkBananaCollision(sim, simInterval, stepCount, effectiveRadius, mapC
         broadcast({ type: 'napalm', x: bx, y: by, radius: effectiveRadius });
       }
 
-      if (sim.distanceTraveled > match.stats[match.currentPlayer - 1].longestShot) {
-        match.stats[match.currentPlayer - 1].longestShot = Math.floor(sim.distanceTraveled);
+      if (sim.isSunAttack) {
+        determineWinnerAndScore(gi, g.x + GORILLA_W / 2, g.y + GORILLA_H / 2, findOpponentOf(gi));
+      } else {
+        if (sim.distanceTraveled > match.stats[match.currentPlayer - 1].longestShot) {
+          match.stats[match.currentPlayer - 1].longestShot = Math.floor(sim.distanceTraveled);
+        }
+        match.stats[match.currentPlayer - 1].hits++;
+        determineWinnerAndScore(gi, g.x + GORILLA_W / 2, g.y + GORILLA_H / 2);
       }
-      match.stats[match.currentPlayer - 1].hits++;
-
-      determineWinnerAndScore(gi, g.x + GORILLA_W / 2, g.y + GORILLA_H / 2);
 
       return true;
     }
@@ -1040,6 +1522,9 @@ function checkBananaCollision(sim, simInterval, stepCount, effectiveRadius, mapC
         }
       }
       if (!carved) {
+        // Sun attack bananas phase through terrain so the hit is guaranteed
+        if (sim.isSunAttack) return false;
+
         // Skipper: bounce
         if (sim.bouncesLeft > 0) {
           sim.bouncesLeft--;
@@ -1054,7 +1539,7 @@ function checkBananaCollision(sim, simInterval, stepCount, effectiveRadius, mapC
 
         if (sim.type === 'dud') {
           broadcast({ type: 'dud', x: bx, y: by });
-          setTimeout(() => switchTurn(), 1000);
+          scheduleGuardedSwitchTurn(1000);
           return true;
         }
 
@@ -1089,10 +1574,13 @@ function checkBananaCollision(sim, simInterval, stepCount, effectiveRadius, mapC
         if (blastHit >= 0) {
           match.stats[match.currentPlayer - 1].hits++;
           const gBlast = match.gorillas[blastHit];
-          setTimeout(() => determineWinnerAndScore(blastHit, gBlast.x + GORILLA_W / 2, gBlast.y + GORILLA_H / 2), 400);
+          scheduleGameplayAction(
+            () => determineWinnerAndScore(blastHit, gBlast.x + GORILLA_W / 2, gBlast.y + GORILLA_H / 2),
+            400
+          );
         } else {
           checkBuildingCollapse(hitBuildingIdx, exp);
-          setTimeout(() => switchTurn(), 600);
+          scheduleGuardedSwitchTurn(600);
         }
         return true;
       }
@@ -1107,6 +1595,7 @@ function checkBananaCollision(sim, simInterval, stepCount, effectiveRadius, mapC
     if (distSq <= SUN_RADIUS * SUN_RADIUS && !sim.sunHitSent) {
       sim.sunHitSent = true;
       broadcast({ type: 'sunHit' });
+      if (!sim.isSunAttack) handleSunHit(match.currentPlayer - 1);
     } else if (distSq > SUN_RADIUS * SUN_RADIUS) {
       sim.sunHitSent = false;
     }
@@ -1194,21 +1683,23 @@ function getMatchWinState(scoringIdx) {
   };
 }
 
-function determineWinnerAndScore(hitGorillaIdx, deathX, deathY) {
-  const currentIdx = match.currentPlayer - 1;
+function determineWinnerAndScore(hitGorillaIdx, deathX, deathY, forceScorerIdx = null) {
+  const currentIdx = forceScorerIdx != null ? forceScorerIdx : match.currentPlayer - 1;
   let scoringIdx;
 
-  if (isFriendlyHit(currentIdx, hitGorillaIdx)) {
+  if (forceScorerIdx != null) {
+    scoringIdx = forceScorerIdx;
+  } else if (isFriendlyHit(currentIdx, hitGorillaIdx)) {
     if (!match.settings.friendlyFire) {
       recordMiss();
-      setTimeout(() => switchTurn(), 500);
+      scheduleGuardedSwitchTurn(500);
       return false;
     }
 
     scoringIdx = getFallbackWinnerForOwnGoal(currentIdx);
     if (scoringIdx == null) {
       recordMiss();
-      setTimeout(() => switchTurn(), 500);
+      scheduleGuardedSwitchTurn(500);
       return false;
     }
   } else {
@@ -1231,33 +1722,42 @@ function determineWinnerAndScore(hitGorillaIdx, deathX, deathY) {
     winnerLabel: winState.winnerLabel,
     scores: getDisplayScores(),
     playerNames: getPlayerNamesView(),
+    playerColors: getPlayerColorsView(),
     playerTeams: getPlayerTeamsView(),
     scoreMode: getScoreMode(),
     teamScores: getScoreMode() === 'team' ? getTeamScores() : null,
     scoreSummary: getScoreSummary(),
     slowmo: winState.matchOver,
+    hostPlayer: getHostPlayerNumber(),
   });
 
   if (winState.matchOver) {
     match.state = 'matchOver';
+    clearPauseState();
+    match.matchOverSummary = {
+      winner: scoringIdx + 1,
+      winnerLabel: winState.winnerLabel,
+      finalScores: getDisplayScores(),
+      playerNames: getPlayerNamesView(),
+      playerColors: getPlayerColorsView(),
+      playerTeams: getPlayerTeamsView(),
+      scoreMode: getScoreMode(),
+      teamScores: getScoreMode() === 'team' ? getTeamScores() : null,
+      scoreSummary: getScoreSummary(),
+      stats: match.stats.slice(0, getActivePlayerCount()),
+      hostPlayer: getHostPlayerNumber(),
+    };
     clearAllIntervals();
     match.matchOverTimer = setTimeout(() => {
       match.matchOverTimer = null;
       broadcast({
         type: 'matchOver',
-        winner: scoringIdx + 1,
-        winnerLabel: winState.winnerLabel,
-        finalScores: getDisplayScores(),
-        playerNames: getPlayerNamesView(),
-        playerTeams: getPlayerTeamsView(),
-        scoreMode: getScoreMode(),
-        teamScores: getScoreMode() === 'team' ? getTeamScores() : null,
-        scoreSummary: getScoreSummary(),
-        stats: match.stats.slice(0, getActivePlayerCount()),
+        ...match.matchOverSummary,
       });
     }, 3000);
   } else {
     match.state = 'roundEnd';
+    clearPauseState();
     if (match.roundEndTimer) { clearTimeout(match.roundEndTimer); }
     match.roundEndTimer = setTimeout(() => {
       match.roundEndTimer = null;
@@ -1270,9 +1770,13 @@ function determineWinnerAndScore(hitGorillaIdx, deathX, deathY) {
 function clearAllIntervals() {
   if (match.weatherTickInterval) { clearInterval(match.weatherTickInterval); match.weatherTickInterval = null; }
   if (match.erosionInterval) { clearInterval(match.erosionInterval); match.erosionInterval = null; }
-  if (match.turnTimerInterval) { clearInterval(match.turnTimerInterval); match.turnTimerInterval = null; }
+  stopTurnTimer(false);
   if (match.roundEndTimer) { clearTimeout(match.roundEndTimer); match.roundEndTimer = null; }
   if (match.matchOverTimer) { clearTimeout(match.matchOverTimer); match.matchOverTimer = null; }
+  for (const timer of match.deferredGameplayTimers) {
+    clearTimeout(timer);
+  }
+  match.deferredGameplayTimers.clear();
 }
 
 function checkBuildingCollapse(buildingIdx, explosion) {
@@ -1306,7 +1810,7 @@ function checkBuildingCollapse(buildingIdx, explosion) {
         const gCollapseY = mapCfg.h - GORILLA_H / 2;
         match.gorillas[gi] = { x: g.x, y: mapCfg.h - GORILLA_H };
         // Credit the round to the current shooter if they didn't kill themselves with it
-        setTimeout(() => determineWinnerAndScore(gi, gCollapseX, gCollapseY), 500);
+        scheduleGameplayAction(() => determineWinnerAndScore(gi, gCollapseX, gCollapseY), 500);
         return;
       }
     }
@@ -1350,9 +1854,12 @@ wss.on('connection', (ws) => {
     switch (msg.type) {
       case 'join': handleJoin(ws, msg); break;
       case 'fire': handleFire(ws, msg); break;
+      case 'setPaused': handleSetPaused(ws, msg); break;
       case 'rematch': handleRematch(ws); break;
       case 'newMatch': handleNewMatch(ws); break;
+      case 'setProfile': handleSetProfile(ws, msg); break;
       case 'setSettings': handleSetSettings(ws, msg); break;
+      case 'leaveMatch': handleLeaveMatch(ws); break;
       case 'clearMatch': handleClearMatch(ws); break;
       case 'chat': handleChat(ws, msg); break;
       case 'taunt': handleTaunt(ws, msg); break;
@@ -1379,50 +1886,39 @@ function handleJoin(ws, msg) {
   }
 
   // Reconnect check
-  if (match.state === 'playing' || match.state === 'roundEnd' || match.state === 'matchOver') {
-    for (let i = 0; i < 4; i++) {
-      const p = match.players[i];
-      if (p && !p.connected && p.name === name && p.token === msg.token) {
-        p.ws = ws;
-        p.connected = true;
-        if (match.disconnectTimers[i]) {
-          clearTimeout(match.disconnectTimers[i]);
-          match.disconnectTimers[i] = null;
-        }
-        ws.send(JSON.stringify({
-          type: 'assigned',
-          player: i + 1,
-          playerNames: getPlayerNamesView(),
-          playerTeams: getPlayerTeamsView(),
-          scoreMode: getScoreMode(),
-          teamScores: getScoreMode() === 'team' ? getTeamScores() : null,
-          activePlayerCount: getActivePlayerCount(),
-          token: p.token,
-        }));
-        // Resync round state
-        ws.send(JSON.stringify(buildRoundStartPayload()));
-        for (const exp of match.explosions) {
-          ws.send(JSON.stringify({ type: 'explosion', x: exp.x, y: exp.y, radius: exp.radius }));
-        }
-        // Re-send existing turrets so the reconnecting client can render them
-        for (const t of match.turrets) {
-          ws.send(JSON.stringify({
-            type: 'turretDeploy',
-            id: t.id,
-            playerIdx: t.ownerIdx,
-            x: t.x,
-            y: t.y,
-            cx: t.cx,
-            cy: t.cy,
-            expireTurn: t.expireTurn,
-          }));
-        }
-        for (let otherIdx = 0; otherIdx < getActivePlayerCount(); otherIdx++) {
-          if (otherIdx !== i) sendTo(otherIdx, { type: 'opponentReconnected' });
-        }
-        return;
-      }
+  for (let i = 0; i < 4; i++) {
+    const p = match.players[i];
+    if (!p || p.connected || p.token !== msg.token || p.name !== name) continue;
+
+    p.ws = ws;
+    p.connected = true;
+    p.name = name;
+    if (typeof msg.color === 'string') {
+      p.color = sanitizePlayerColor(msg.color, p.color || getDefaultPlayerColor(i));
     }
+    if (match.disconnectTimers[i]) {
+      clearTimeout(match.disconnectTimers[i]);
+      match.disconnectTimers[i] = null;
+    }
+
+    const preservedTurnRemainingMs = getTurnRemainingMs();
+    ws.send(JSON.stringify(buildAssignedPayload(i, { waiting: match.state === 'waiting' })));
+
+    if (match.state === 'waiting') {
+      sendWaitingState();
+      return;
+    }
+
+    ws.send(JSON.stringify(buildStateSyncPayload()));
+
+    if (match.state === 'playing' && !isGameplayPaused() && !match.banana && preservedTurnRemainingMs > 0) {
+      startTurnTimer(preservedTurnRemainingMs);
+    }
+
+    for (let otherIdx = 0; otherIdx < getActivePlayerCount(); otherIdx++) {
+      if (otherIdx !== i) sendTo(otherIdx, { type: 'opponentReconnected' });
+    }
+    return;
   }
 
   if (match.state === 'playing' || match.state === 'roundEnd') {
@@ -1435,11 +1931,7 @@ function handleJoin(ws, msg) {
   if (match.state === 'matchOver' || match.state === 'waiting') {
     for (let i = 0; i < 4; i++) {
       const p = match.players[i];
-      if (p && !p.connected) {
-        if (match.disconnectTimers[i]) {
-          clearTimeout(match.disconnectTimers[i]);
-          match.disconnectTimers[i] = null;
-        }
+      if (p && !p.connected && !match.disconnectTimers[i]) {
         match.players[i] = null;
       }
     }
@@ -1462,7 +1954,14 @@ function handleJoin(ws, msg) {
   }
 
   const token = crypto.randomUUID();
-  match.players[slot] = { ws, name, connected: true, token };
+  match.players[slot] = {
+    ws,
+    name,
+    connected: true,
+    token,
+    color: sanitizePlayerColor(msg.color, getDefaultPlayerColor(slot)),
+  };
+  ws.send(JSON.stringify(buildAssignedPayload(slot, { waiting: true })));
   sendWaitingState();
 
   maybeStartMatchFromWaiting();
@@ -1488,22 +1987,17 @@ function maybeStartMatchFromWaiting() {
 
   for (let i = 0; i < match.rosterSize; i++) {
     if (match.players[i]?.connected) {
-      sendTo(i, {
-        type: 'assigned',
-        player: i + 1,
-        playerNames: getPlayerNamesView(),
-        playerTeams: getPlayerTeamsView(),
-        scoreMode: getScoreMode(),
-        teamScores: getScoreMode() === 'team' ? getTeamScores() : null,
-        activePlayerCount: getActivePlayerCount(),
-        token: match.players[i].token,
-      });
+      sendTo(i, buildAssignedPayload(i, { waiting: false }));
     }
   }
 
   match.scores = [0, 0, 0, 0];
   match.stats = match.stats.map(() => ({ shots: 0, hits: 0, nearMisses: 0, longestShot: 0, fastestBanana: 0 }));
-  setTimeout(() => newRound(), 1000);
+  match.matchOverSummary = null;
+  match.turnTimeRemainingMs = 0;
+  match.turnTimerDeadline = 0;
+  match.starting = true;
+  setTimeout(() => { match.starting = false; newRound(); }, 1000);
   return true;
 }
 
@@ -1582,11 +2076,16 @@ function recordMiss() {
 
 function handleFire(ws, msg) {
   if (match.state !== 'playing') return;
+  if (isGameplayPaused()) return;
 
   const playerIdx = match.players.findIndex(p => p && p.ws === ws);
   if (playerIdx === -1) return;
   if (playerIdx + 1 !== match.currentPlayer) return;
-  if (match.banana || match.bananas.length > 0) return;
+  if (match.banana || match.bananas.length > 0 || match.fireInProgress) return;
+
+  // Atomically claim the fire slot before any async work to prevent a second
+  // message arriving before match.banana is set from launching a second projectile.
+  match.fireInProgress = true;
 
   // Each fire action counts as a turn. Increment before expiry check so a turret
   // deployed on turn N is still alive for turns N+1 and N+2.
@@ -1668,7 +2167,7 @@ function startTurretDeploy(playerIdx, angle, velocity) {
     bananaType: 'turret-deploy',
   });
 
-  setTimeout(() => {
+  scheduleGameplayAction(() => {
     if (match.banana) simulateTurretDeploy();
   }, 300);
 }
@@ -1688,6 +2187,7 @@ function simulateTurretDeploy() {
       clearInterval(simInterval);
       return;
     }
+    if (isGameplayPaused()) return;
 
     const gravity = BASE_GRAVITY * match.settings.gravityMultiplier * biomeCfg.gravMult;
     sim.vx += match.wind * 0.5 * DT;
@@ -1711,7 +2211,7 @@ function simulateTurretDeploy() {
           clearInterval(simInterval);
           match.banana = null;
           broadcast({ type: 'turretDud', x: sim.x, y: sim.y });
-          setTimeout(() => switchTurn(), 800);
+          scheduleGuardedSwitchTurn(800);
           return;
         }
       }
@@ -1732,7 +2232,7 @@ function simulateTurretDeploy() {
             clearInterval(simInterval);
             plantTurret(sim.ownerIdx, sim.x, b.y);
             match.banana = null;
-            setTimeout(() => switchTurn(), 500);
+            scheduleGuardedSwitchTurn(500);
             return;
           }
         }
@@ -1748,7 +2248,7 @@ function simulateTurretDeploy() {
       clearInterval(simInterval);
       plantTurret(sim.ownerIdx, sim.x, mapCfg.h - TURRET_H);
       match.banana = null;
-      setTimeout(() => switchTurn(), 500);
+      scheduleGuardedSwitchTurn(500);
       return;
     }
 
@@ -1757,7 +2257,7 @@ function simulateTurretDeploy() {
       clearInterval(simInterval);
       match.banana = null;
       broadcast({ type: 'turretDud', x: sim.x, y: sim.y });
-      setTimeout(() => switchTurn(), 400);
+      scheduleGuardedSwitchTurn(400);
       return;
     }
 
@@ -1920,7 +2420,7 @@ function checkBananaHitsTurret(sim) {
 function handleRematch(ws) {
   if (match.state !== 'matchOver') return;
   const playerIdx = match.players.findIndex(p => p && p.ws === ws);
-  if (playerIdx !== 0) {
+  if (playerIdx !== getHostPlayerIndex()) {
     ws.send(JSON.stringify({ type: 'error', message: 'Only the host can start a rematch' }));
     return;
   }
@@ -1942,7 +2442,11 @@ function handleRematch(ws) {
   match.turnNumber = 0;
   match.turrets = [];
   match.banana = null;
-  match.turretCharges = [TURRET_CHARGES_PER_MATCH, TURRET_CHARGES_PER_MATCH, TURRET_CHARGES_PER_MATCH, TURRET_CHARGES_PER_MATCH];
+  match.bananas = [];
+  match.matchOverSummary = null;
+  match.turnTimeRemainingMs = 0;
+  match.turnTimerDeadline = 0;
+  match.turretCharges = [TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE];
   match.state = 'playing';
   newRound();
 }
@@ -1950,7 +2454,7 @@ function handleRematch(ws) {
 function handleNewMatch(ws) {
   if (match.state !== 'matchOver') return;
   const playerIdx = match.players.findIndex(p => p && p.ws === ws);
-  if (playerIdx !== 0) {
+  if (playerIdx !== getHostPlayerIndex()) {
     ws.send(JSON.stringify({ type: 'error', message: 'Only the host can start a new match' }));
     return;
   }
@@ -1965,15 +2469,19 @@ function handleNewMatch(ws) {
   match.turnNumber = 0;
   match.artilleryShots = 0;
   match.banana = null;
+  match.bananas = [];
   match.turrets = [];
-  match.turretCharges = [TURRET_CHARGES_PER_MATCH, TURRET_CHARGES_PER_MATCH, TURRET_CHARGES_PER_MATCH, TURRET_CHARGES_PER_MATCH];
+  match.matchOverSummary = null;
+  match.turnTimeRemainingMs = 0;
+  match.turnTimerDeadline = 0;
+  match.turretCharges = [TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE, TURRET_CHARGES_PER_LIFE];
   broadcast({ type: 'returnToSetup' });
 }
 
 function handleClearMatch(ws) {
-  // Only allow from a connected player (host = player 0)
+  // Only allow from the currently assigned host slot.
   const playerIdx = match.players.findIndex(p => p && p.ws === ws);
-  if (playerIdx !== 0) {
+  if (playerIdx !== getHostPlayerIndex()) {
     ws.send(JSON.stringify({ type: 'error', message: 'Only the host can clear the match' }));
     return;
   }
@@ -1993,10 +2501,40 @@ function handleClearMatch(ws) {
   match = createMatch();
 }
 
-function handleSetSettings(ws, msg) {
-  if (match.state !== 'waiting') return;
+function handleSetProfile(ws, msg) {
   const playerIdx = match.players.findIndex(p => p && p.ws === ws);
-  if (playerIdx !== 0) return;
+  if (playerIdx === -1) return;
+
+  const player = match.players[playerIdx];
+  if (typeof msg.name === 'string') {
+    player.name = msg.name.trim().substring(0, 20) || player.name;
+  }
+  if (typeof msg.color === 'string') {
+    player.color = sanitizePlayerColor(msg.color, player.color || getDefaultPlayerColor(playerIdx));
+  }
+
+  sendTo(playerIdx, buildAssignedPayload(playerIdx, { waiting: match.state === 'waiting' }));
+
+  if (match.state === 'waiting') {
+    sendWaitingState();
+    return;
+  }
+
+  broadcast(buildStateSyncPayload());
+}
+
+function handleSetPaused(ws, msg) {
+  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
+  if (playerIdx === -1) return;
+  if (playerIdx >= getActivePlayerCount()) return;
+  if (typeof msg.paused !== 'boolean') return;
+  setGameplayPaused(msg.paused, playerIdx);
+}
+
+function handleSetSettings(ws, msg) {
+  if (match.state !== 'waiting' || match.starting) return;
+  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
+  if (playerIdx !== getHostPlayerIndex()) return;
 
   const s = match.settings;
 
@@ -2038,6 +2576,49 @@ function handleSetSettings(ws, msg) {
   maybeStartMatchFromWaiting();
 }
 
+function handleLeaveMatch(ws) {
+  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
+  if (playerIdx === -1) return;
+
+  const playerName = match.players[playerIdx]?.name || `Player ${playerIdx + 1}`;
+  if (match.disconnectTimers[playerIdx]) {
+    clearTimeout(match.disconnectTimers[playerIdx]);
+    match.disconnectTimers[playerIdx] = null;
+  }
+
+  try {
+    ws.send(JSON.stringify({ type: 'leftMatch' }));
+  } catch (err) {}
+
+  match.players[playerIdx] = null;
+
+  const anyConnected = match.players.some(p => p?.connected);
+  if (!anyConnected) {
+    clearAllIntervals();
+    match = createMatch();
+    return;
+  }
+
+  clearAllIntervals();
+  clearPauseState();
+  match.state = 'waiting';
+  match.rosterSize = 0;
+  match.matchOverSummary = null;
+  match.banana = null;
+  match.bananas = [];
+  match.turrets = [];
+  match.collapsedBuildingIndices = new Set();
+
+  for (let i = 0; i < match.players.length; i++) {
+    if (i !== playerIdx && match.players[i]?.connected) {
+      sendTo(i, { type: 'opponentLeft', player: playerIdx + 1, playerName });
+    }
+  }
+
+  sendWaitingState();
+  maybeStartMatchFromWaiting();
+}
+
 function handleDisconnect(ws) {
   const playerIdx = match.players.findIndex(p => p && p.ws === ws);
   if (playerIdx === -1) return;
@@ -2046,10 +2627,7 @@ function handleDisconnect(ws) {
   const playerName = match.players[playerIdx].name || `Player ${playerIdx + 1}`;
 
   // Clear turn timer so the disconnected player's timer doesn't fire
-  if (match.turnTimerInterval) {
-    clearInterval(match.turnTimerInterval);
-    match.turnTimerInterval = null;
-  }
+  stopTurnTimer(true);
 
   if (match.state === 'waiting') {
     sendWaitingState();
@@ -2063,7 +2641,8 @@ function handleDisconnect(ws) {
   match.disconnectTimers[playerIdx] = setTimeout(() => {
     match.players[playerIdx] = null;
     match.disconnectTimers[playerIdx] = null;
-    if (match.banana) match.banana = null;
+    match.banana = null;
+    match.bananas = [];
 
     const anyConnected = match.players.some(p => p?.connected);
     if (!anyConnected) {
@@ -2072,13 +2651,19 @@ function handleDisconnect(ws) {
       return;
     }
 
+    clearAllIntervals();
+    clearPauseState();
     match.state = 'waiting';
+    match.rosterSize = 0;
+    match.matchOverSummary = null;
+    match.turrets = [];
+    match.collapsedBuildingIndices = new Set();
     // Notify remaining connected players
     for (let i = 0; i < 4; i++) {
       if (i !== playerIdx) sendTo(i, { type: 'opponentTimedOut', player: playerIdx + 1, playerName });
     }
     sendWaitingState();
-  }, 60000);
+  }, DISCONNECT_TIMEOUT_MS);
 }
 
 // ─── Start server ────────────────────────────────────────────────────────────

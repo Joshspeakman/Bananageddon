@@ -53,6 +53,8 @@ const Particles = (function () {
     for (const p of active) pool.push(p);
     active.length = 0;
     emitters.length = 0;
+    if (snowAccum) snowAccum.fill(0);
+    if (ashAccum) ashAccum.fill(0);
   }
 
   // ─── Particle creation ──────────────────────────────────────────────────
@@ -266,7 +268,7 @@ const Particles = (function () {
         vy: Math.sin(angle) * speed - 1,
         life: 0.5 + Math.random() * 0.5,
         size: 1 + Math.floor(Math.random() * 2),
-        color: Math.random() > 0.3 ? '#FF8800' : '#FFFFFF',
+        color: Math.random() > 0.4 ? '#FF8C1A' : '#FFF3A0',
         type: 'square', alpha: 1, fadeOut: true, gravity: 0.15,
       });
     }
@@ -283,7 +285,7 @@ const Particles = (function () {
         vy: -0.5 - Math.random() * 1,
         life: 2 + Math.random() * 1,
         size: 3 + Math.floor(Math.random() * 4),
-        color: '#555555', type: 'circle',
+        color: '#666674', type: 'circle',
         alpha: 0.5, fadeOut: true, gravity: -0.02,
       });
     }
@@ -468,22 +470,29 @@ const Particles = (function () {
           ctx.strokeStyle = p.color;
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.moveTo(p.x, p.y);
-          ctx.lineTo(p.x + p.vx * 0.3, p.y + p.vy * 0.3);
+          const dx = p.vx * 0.25;
+          const dy = p.vy * 0.25;
+          ctx.moveTo(Math.floor(p.x), Math.floor(p.y));
+          ctx.lineTo(Math.floor(p.x + dx * 0.35), Math.floor(p.y + dy * 0.35));
           ctx.stroke();
+          ctx.fillRect(Math.floor(p.x + dx * 0.7), Math.floor(p.y + dy * 0.7), 1, 1);
+          ctx.fillRect(Math.floor(p.x + dx), Math.floor(p.y + dy), 1, 1);
           break;
         }
         case 'circle': {
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-          ctx.fill();
+          const px = Math.floor(p.x);
+          const py = Math.floor(p.y);
+          const r = Math.max(1, Math.floor(p.size));
+          ctx.fillRect(px - r, py - r, r + 2, r + 2);
+          ctx.fillRect(px - r - 1, py, r + 1, r);
+          ctx.fillRect(px, py - r - 1, r, r + 1);
           break;
         }
         case 'glow': {
-          // Tiny glow for fireflies
-          ctx.fillRect(Math.floor(p.x) - 1, Math.floor(p.y) - 1, 2, 2);
+          ctx.fillRect(Math.floor(p.x) - 1, Math.floor(p.y) - 1, 3, 3);
           ctx.globalAlpha = alpha * 0.3;
-          ctx.fillRect(Math.floor(p.x) - 2, Math.floor(p.y) - 2, 4, 4);
+          ctx.fillRect(Math.floor(p.x) - 3, Math.floor(p.y), 7, 1);
+          ctx.fillRect(Math.floor(p.x), Math.floor(p.y) - 3, 1, 7);
           break;
         }
         default: { // square
@@ -523,27 +532,17 @@ const Particles = (function () {
       ctx.globalAlpha = alpha;
       ctx.fillStyle = p.color;
       if (p.type === 'circle') {
-        // Draw as fluffy cloud shape (multiple overlapping circles)
-        const r = p.size;
-        ctx.beginPath();
-        ctx.arc(p.x - r * 0.6, p.y, r * 0.8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(p.x, p.y - r * 0.3, r * 0.9, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(p.x + r * 0.6, p.y, r * 0.8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(p.x - r * 0.3, p.y + r * 0.5, r * 0.7, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(p.x + r * 0.3, p.y + r * 0.5, r * 0.7, 0, Math.PI * 2);
-        ctx.fill();
+        const px = Math.floor(p.x);
+        const py = Math.floor(p.y);
+        const r = Math.max(2, Math.floor(p.size));
+        ctx.fillRect(px - r, py - r / 2, r + 4, r);
+        ctx.fillRect(px - r / 2, py - r, r + 2, r + 4);
+        ctx.fillRect(px - r + 2, py + r / 2, r, Math.max(2, r / 2));
       } else {
-        ctx.fillRect(Math.floor(p.x) - 1, Math.floor(p.y) - 1, 2, 2);
+        ctx.fillRect(Math.floor(p.x) - 1, Math.floor(p.y) - 1, 3, 3);
         ctx.globalAlpha = alpha * 0.3;
-        ctx.fillRect(Math.floor(p.x) - 2, Math.floor(p.y) - 2, 4, 4);
+        ctx.fillRect(Math.floor(p.x) - 3, Math.floor(p.y), 7, 1);
+        ctx.fillRect(Math.floor(p.x), Math.floor(p.y) - 3, 1, 7);
       }
     }
     ctx.globalAlpha = 1;
@@ -563,9 +562,10 @@ const Particles = (function () {
         ctx.strokeStyle = p.color;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x + p.vx * 0.3, p.y + p.vy * 0.3);
+        ctx.moveTo(Math.floor(p.x), Math.floor(p.y));
+        ctx.lineTo(Math.floor(p.x + p.vx * 0.25), Math.floor(p.y + p.vy * 0.25));
         ctx.stroke();
+        ctx.fillRect(Math.floor(p.x + p.vx * 0.2), Math.floor(p.y + p.vy * 0.2), 1, 1);
       } else {
         if (p.spin !== 0) {
           ctx.save();

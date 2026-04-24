@@ -16,10 +16,26 @@
 
     <!-- Title Screen -->
     <div id="title-screen" class="screen active">
+      <div class="title-mega">MEGA</div>
       <div class="title-text">BANANAGEDDON</div>
+      <div class="title-subtitle">BLAST PROCESSED ROOFTOP BANANA WARFARE</div>
+      <div class="title-marquee">CHUNKY BANANAS. HOT FM ENERGY.</div>
       <div class="title-buttons">
         <button id="host-btn" class="title-btn host-btn">HOST GAME</button>
-        <button id="join-btn" class="title-btn join-btn" style="display:none;">JOIN GAME</button>
+        <button id="join-btn" class="title-btn join-btn">SEARCH FOR GAME <span id="join-spinner" class="join-spinner" style="display:none;">…</span></button>
+      </div>
+      <div class="title-audio-panel">
+        <div class="title-audio-kicker">AUDIO</div>
+        <div class="title-audio-row">
+          <label for="music-volume">Music Volume</label>
+          <input id="music-volume" class="title-audio-slider" type="range" min="0" max="100" step="5" value="100">
+          <span id="music-volume-readout" class="title-audio-readout">100%</span>
+        </div>
+        <div class="title-audio-row">
+          <label for="sfx-volume">SFX Volume</label>
+          <input id="sfx-volume" class="title-audio-slider" type="range" min="0" max="100" step="5" value="100">
+          <span id="sfx-volume-readout" class="title-audio-readout">100%</span>
+        </div>
       </div>
       <div id="title-lobby" class="title-lobby" style="display:none;">
         <div id="lobby-info" class="lobby-info"></div>
@@ -30,11 +46,20 @@
     <!-- Setup Screen (Tabbed) -->
     <div id="setup-screen" class="screen">
       <div class="setup-box">
+        <div class="panel-kicker">BATTLE CONFIG</div>
         <h2>GAME SETUP</h2>
 
         <div class="setup-field">
           <label for="player-name">Your Name:</label>
           <input type="text" id="player-name" maxlength="20" value="Player" autocomplete="off">
+        </div>
+
+        <div class="setup-field setup-field-color">
+          <label for="player-color">Monkey Color:</label>
+          <div class="setup-color-control">
+            <input type="color" id="player-color" value="#9D52FF" aria-label="Pick monkey color">
+            <span id="player-color-readout" class="setup-color-readout">#9D52FF</span>
+          </div>
         </div>
 
         <!-- Host-only settings (hidden for joiners) -->
@@ -228,10 +253,10 @@
             </select>
           </div>
           <div class="setup-field">
-            <label for="crt-select">CRT Overlay:</label>
+            <label for="crt-select">CRT + Bloom:</label>
             <select id="crt-select">
-              <option value="false" selected>Off</option>
-              <option value="true">On</option>
+              <option value="true" selected>On</option>
+              <option value="false">Off</option>
             </select>
           </div>
           <div class="setup-field">
@@ -259,6 +284,7 @@
     <!-- Waiting Screen -->
     <div id="waiting-screen" class="screen">
       <div class="waiting-box">
+        <div class="panel-kicker">LINK UP</div>
         <h2>WAITING FOR PLAYERS</h2>
         <div id="waiting-url" class="waiting-url"></div>
         <button id="copy-url-btn" class="copy-url-btn">Copy Link</button>
@@ -279,6 +305,8 @@
           <span class="hud-sep hud-timer-sep" id="hud-timer-sep" style="display:none;">|</span>
           <div id="hud-timer" class="hud-timer" style="display:none;"></div>
           <span class="hud-sep">|</span>
+          <div id="hud-info" class="hud-info" style="display:none;"></div>
+          <span class="hud-sep">|</span>
           <div id="hud-music" class="hud-music">&#9834; ON [M]</div>
           <button id="hud-prev-track" class="hud-track-btn" title="Previous track">&#9664;</button>
           <button id="hud-next-track" class="hud-track-btn" title="Next track">&#9654;</button>
@@ -286,29 +314,54 @@
         <div id="hud-scores" class="hud-scores" aria-live="polite"></div>
       </div>
 
-      <!-- Biome/weather info ribbon -->
-      <div id="hud-info" class="hud-info" style="display:none;"></div>
+      <!-- Error toast — shows server errors even when chat is closed -->
+      <div id="error-toast" class="error-toast"></div>
 
       <!-- Windshear banner -->
       <div id="windshear-banner" class="windshear-banner" style="display:none;">⚠ WINDSHEAR: Wind reverses at arc peak!</div>
+
+      <!-- Keyboard help overlay ([?] key) -->
+      <div id="keys-overlay" class="keys-overlay" style="display:none;" role="dialog" aria-label="Keyboard shortcuts">
+        <div class="keys-box">
+          <div class="keys-title">KEYBOARD SHORTCUTS</div>
+          <table class="keys-table">
+            <tr><td><kbd>Enter</kbd></td><td>Fire banana</td></tr>
+            <tr><td><kbd>Tab</kbd></td><td>Switch angle ↔ power</td></tr>
+            <tr><td><kbd>T</kbd></td><td>Open chat</td></tr>
+            <tr><td><kbd>M</kbd></td><td>Toggle music</td></tr>
+            <tr><td><kbd>P</kbd> / <kbd>Esc</kbd></td><td>Pause game</td></tr>
+            <tr><td><kbd>R</kbd></td><td>Restart match (host)</td></tr>
+            <tr><td><kbd>N</kbd></td><td>Next round (match over)</td></tr>
+            <tr><td><kbd>?</kbd></td><td>This help screen</td></tr>
+          </table>
+          <div class="keys-close-hint">Press <kbd>?</kbd> or <kbd>Esc</kbd> to close</div>
+        </div>
+      </div>
 
       <!-- Bottom bar: chat 70% | controls 30% -->
       <div id="hud-bottombar">
 
         <!-- Chat panel -->
         <div id="chat-box" class="chat-box">
-          <div class="chat-tab-bar"><span class="chat-tab active">General</span></div>
-          <div id="chat-log" class="chat-log"></div>
-          <div class="chat-input-row" id="chat-input-row" style="display:none;">
-            <span class="chat-prompt">Say:</span>
-            <input type="text" id="chat-input" class="chat-input-field" maxlength="200" autocomplete="off" placeholder="Press Enter to send, Esc to cancel">
+          <div class="chat-head">
+            <span class="chat-title">CHAT FEED</span>
+            <span class="chat-shortcut">[T] QUICK OPEN</span>
           </div>
-          <div class="chat-hint">[T] to chat &bull; click to type</div>
+          <div id="chat-log" class="chat-log"></div>
+          <div class="chat-input-row" id="chat-input-row">
+            <label class="chat-prompt" for="chat-input">MESSAGE</label>
+            <input type="text" id="chat-input" class="chat-input-field" maxlength="200" autocomplete="off" placeholder="Type here, press Enter to send">
+            <button id="chat-send-btn" class="chat-send-btn" type="button">SEND</button>
+          </div>
+          <div class="chat-hint">Enter to send &bull; Esc to blur &bull; click chat to focus</div>
         </div>
 
         <!-- Controls panel (only shown on your turn) -->
         <div id="input-panel" class="input-panel panel-disabled">
-          <div class="ctrl-header">&#9889; YOUR SHOT</div>
+          <div class="ctrl-header">
+            <span class="ctrl-header-kicker">SHOT DECK</span>
+            <span id="ctrl-header-status" class="ctrl-header-status">STANDBY</span>
+          </div>
           <div id="ammo-select" class="ammo-select">
             <label class="ammo-label">
               <input type="radio" name="ammo" id="ammo-banana" value="banana" checked>
@@ -316,25 +369,31 @@
             </label>
             <label class="ammo-label" id="ammo-turret-label">
               <input type="radio" name="ammo" id="ammo-turret" value="turret">
-              <span>TURRET <span id="turret-charges">(2)</span></span>
+              <span>TURRET <span id="turret-charges" class="ammo-count">3</span></span>
             </label>
           </div>
           <div class="ctrl-inputs">
             <div class="ctrl-field">
-              <label for="input-angle">ANGLE</label>
-              <input type="number" id="input-angle" min="0" max="180" value="45" autocomplete="off">
-              <span class="ctrl-unit">0&ndash;180&deg;</span>
+              <div class="ctrl-field-head">
+                <label for="input-angle">ANGLE</label>
+                <span class="ctrl-range">0&ndash;180&deg;</span>
+              </div>
+              <input type="number" id="input-angle" min="0" max="180" value="45" autocomplete="off" inputmode="numeric">
+              <span class="ctrl-unit">Trajectory arc</span>
             </div>
             <div class="ctrl-field">
-              <label for="input-velocity">POWER</label>
-              <input type="number" id="input-velocity" min="0" max="200" value="50" autocomplete="off">
-              <span class="ctrl-unit">0&ndash;200</span>
+              <div class="ctrl-field-head">
+                <label for="input-velocity">POWER</label>
+                <span id="ctrl-velocity-range" class="ctrl-range">0&ndash;200</span>
+              </div>
+              <input type="number" id="input-velocity" min="0" max="200" value="50" autocomplete="off" inputmode="numeric">
+              <span class="ctrl-unit">Launch speed</span>
             </div>
           </div>
           <div class="ctrl-btn-row">
-            <button id="fire-btn" class="fire-btn">FIRE!</button>
+            <button id="fire-btn" class="fire-btn">FIRE</button>
             <button id="taunt-btn" class="taunt-btn">TAUNT</button>
-            <button id="picnic-btn" class="picnic-btn">PICNIC!</button>
+            <button id="picnic-btn" class="picnic-btn">PICNIC</button>
           </div>
         </div>
 
@@ -346,6 +405,7 @@
       <div class="match-over-layout">
         <canvas id="monkey-canvas-left"  class="monkey-dance-canvas" width="110" height="200"></canvas>
         <div class="match-over-box">
+          <div class="panel-kicker">FINAL ROUND</div>
           <h1 id="winner-text"></h1>
           <div id="final-scores"></div>
           <div id="match-stats" class="match-stats"></div>
@@ -362,9 +422,94 @@
 
     <!-- Pause overlay -->
     <div id="pause-screen" class="screen">
-      <div class="pause-box">
-        <h2>PAUSED</h2>
-        <div>Press P or Esc to resume</div>
+      <div class="pause-menu">
+        <div class="panel-kicker">MATCH CONTROL</div>
+        <h2 id="pause-title">PAUSED</h2>
+        <div id="pause-status" class="pause-status">You paused the match.</div>
+
+        <div class="pause-grid">
+          <div class="pause-section">
+            <h3>Graphics</h3>
+            <div class="pause-field">
+              <label for="pause-shake-select">Screen Shake</label>
+              <select id="pause-shake-select">
+                <option value="off">Off</option>
+                <option value="light">Light</option>
+                <option value="normal" selected>Normal</option>
+                <option value="heavy">Heavy</option>
+              </select>
+            </div>
+            <div class="pause-field">
+              <label for="pause-trail-select">Trail Style</label>
+              <select id="pause-trail-select">
+                <option value="dotted" selected>Dotted</option>
+                <option value="smoke">Smoke</option>
+                <option value="fire">Fire</option>
+                <option value="none">None</option>
+              </select>
+            </div>
+            <div class="pause-field">
+              <label for="pause-crt-select">CRT + Bloom</label>
+              <select id="pause-crt-select">
+                <option value="true" selected>On</option>
+                <option value="false">Off</option>
+              </select>
+            </div>
+            <div class="pause-field">
+              <label for="pause-effects-quality-select">Effects Quality</label>
+              <select id="pause-effects-quality-select">
+                <option value="0">Low</option>
+                <option value="1">Medium</option>
+                <option value="2" selected>High</option>
+                <option value="3">Insane</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="pause-section">
+            <h3>Sound</h3>
+            <div class="pause-field">
+              <label for="pause-music-select">Music</label>
+              <select id="pause-music-select">
+                <option value="true" selected>On</option>
+                <option value="false">Off</option>
+              </select>
+            </div>
+            <div class="pause-field pause-field-slider">
+              <label for="pause-music-volume">Music Volume</label>
+              <input id="pause-music-volume" type="range" min="0" max="100" step="5" value="100">
+              <span id="pause-music-volume-readout" class="pause-readout">100%</span>
+            </div>
+            <div class="pause-field">
+              <label for="pause-sfx-select">SFX</label>
+              <select id="pause-sfx-select">
+                <option value="true" selected>On</option>
+                <option value="false">Off</option>
+              </select>
+            </div>
+            <div class="pause-field pause-field-slider">
+              <label for="pause-sfx-volume">SFX Volume</label>
+              <input id="pause-sfx-volume" type="range" min="0" max="100" step="5" value="100">
+              <span id="pause-sfx-volume-readout" class="pause-readout">100%</span>
+            </div>
+          </div>
+
+          <div class="pause-section pause-section-profile">
+            <h3>Player</h3>
+            <div class="pause-field">
+              <label for="pause-player-name">Name</label>
+              <input type="text" id="pause-player-name" maxlength="20" value="Player" autocomplete="off">
+            </div>
+            <button id="pause-apply-name-btn" class="pause-secondary-btn">Update Name</button>
+            <div class="pause-note">Updates both players immediately.</div>
+          </div>
+        </div>
+
+        <div class="pause-actions">
+          <button id="pause-resume-btn" class="pause-primary-btn">Resume</button>
+          <button id="pause-exit-btn" class="pause-danger-btn">Exit To Title</button>
+        </div>
+        <div class="pause-hint">Press Esc or P to resume</div>
       </div>
     </div>
 

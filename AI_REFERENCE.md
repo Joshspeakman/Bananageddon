@@ -7,6 +7,8 @@ Reference for working on the current implementation, not the historical design t
 - Game title: `Bananageddon`
 - Directory name on disk: `Monkey Maddness` (legacy)
 - Stack: plain HTML/CSS/JS, Node.js, `ws`
+- Runtime floor: Node.js `16.17+`
+- Visual direction: Genesis-inspired 16-bit broadcast/action presentation with chunky sprites preserved
 - Server model: one global match, server-authoritative physics and scoring
 - Shared definitions: `shared.js`
 - Verified regression coverage: `tests/server-regression.js`
@@ -50,6 +52,7 @@ Do not duplicate mode capability tables in client and server code unless you als
   - `setSettings`
   - `clearMatch`
 - The server broadcasts `settingsSync` plus `waiting` lobby updates while the match is in `waiting`.
+- While the lobby is in `waiting`, connected players can also push profile updates (`name` + `color`) without reconnecting; the host still owns match settings.
 - If the selected mode supports fewer players than are currently connected, `maybeStartMatchFromWaiting()` refuses to start and broadcasts an `error` to the lobby.
 
 ### Playing state
@@ -122,9 +125,46 @@ That is used by the client to keep the waiting screen and setup flow in sync wit
 
 ## Client Notes
 
+### Visual art direction
+
+- The client now uses a deliberate cartridge-style presentation pass rather than a generic retro skin.
+- Core rules:
+  - preserve low-resolution chunky silhouettes
+  - prefer hard color ramps and outline/shadow bands over soft gradients
+  - keep particles, glows, and trails pixel-shaped rather than misty
+  - keep UI chrome loud and arcade-like instead of minimalist
+
+### Visual ownership by file
+
+- `game.js`
+  - owns the biome palette tables used for foreground rendering
+  - applies shaded/outlined building faces on the terrain canvas
+  - renders gorillas with the selected "Arcade Hunch" sprite direction, now using per-player picked neon palettes with a small stepped glow halo
+  - gives the active-turn gorilla a small idle wave so turn ownership reads immediately in-match
+  - renders bananas, trails, and explosions with chunkier 16-bit-style shapes
+  - owns the only foreground sun/moon render; the background sky no longer paints a second celestial orb behind it
+- `background.js`
+  - owns the stage-sky banding and distant silhouette layers
+  - pre-renders biome-specific skyline/dune/mountain/canopy/kelp backdrop shapes
+  - now also renders always-on biome motion layers each frame so maps feel active even between queued events
+  - keeps scheduled ambient background events layered on top of the static stage art and the new motion layer
+- `lighting.js`
+  - adds biome-aware ambient tinting
+  - uses more stepped/banded radial light falloff to avoid washing out the chunky look
+  - adds subtle frame-edge darkening and scanline-like row accents
+- `particles.js`
+  - renders smoke/fog/glow/rain with more rectilinear pixel clusters and segmented streaks
+  - keeps weather readable while avoiding soft modern haze
+- `styles.css`
+  - defines the new “broadcast cartridge” HUD/menu look with stronger bevels, gradients, and palette discipline
+  - owns the `MEGA` title treatment and the CRT+bloom screen pass used across title, menus, and gameplay
+- `index.html`
+  - only received small structural text additions for the new title/setup/match-over presentation
+
 ### Setup flow
 
 - `switchToSetup()` now loads local preferences first, then re-applies synced server settings when the socket is already connected.
+- The setup profile row now includes both `player-name` and `player-color`; color is persisted locally and synchronized to the server on join or when a connected player confirms setup again.
 - This avoids clobbering server-owned match settings after `newMatch`.
 - Non-host players can view lobby settings in connected setup, but synced controls are disabled. Local-only controls such as music and effects quality stay editable.
 
@@ -133,11 +173,40 @@ That is used by the client to keep the waiting screen and setup flow in sync wit
 - HUD score cards are rendered dynamically from arrays rather than fixed `P1/P2` DOM slots.
 - Match-over score text and stats tables now use dynamic player counts.
 - Team mode uses `playerTeams` and `teamScores` from the server payloads.
+- The HUD skin is now intentionally louder: beveled score cards, hotter accent colors, and a cartridge-era “sports broadcast” treatment.
+
+### Audio bindings
+
+- `game.js` now uses file-backed clips for several high-frequency cues instead of only procedural synth stubs.
+- Current bindings:
+  - explosions: `freesound_community-hq-explosion-6288.mp3`
+  - turret fire bursts: `freesound_community-clean-machine-gun-burst-98224.mp3`
+  - turret lock warning: `freesound_community-beep-warning-6387.mp3`
+  - picnic/panic sting: `u_cs6o615ob2-mono-505080.mp3`
+  - title-screen music: `reganati-fruity-dx10-synth-ringtone-411349.mp3`
+- There is no separate server `turretLock` event; the client gates the warning beep on the first `turretFire` packet in each short burst window so it only plays once per lock-on volley.
 
 ### Gorilla facing
 
 - Client reaction animation and throw animation now use gorilla position (`getGorillaSide()`) instead of assuming exactly two mirrored players.
 - This matters for `team` and `koth`, where the active gorilla can be on either side of the skyline.
+
+### Terrain collision note
+
+- `server.js` now resolves banana and turret-deploy terrain contact through a shared solid-terrain helper that skips both explosion craters and fully collapsed buildings.
+- If terrain damage looks wrong, inspect the authoritative collision path first; the client only visualizes `explosion` and `buildingCollapse` messages.
+
+### Stage rendering cautions
+
+- Foreground building colors and background skyline colors are separate on purpose; do not collapse them into one shared palette unless you want flatter scenes.
+- `Background.renderSky()` is now responsible for the stage sky for all times of day, not only dawn/dusk.
+- `Background.renderBackground()` now has two responsibilities:
+  - draw the pre-rendered static stage layer
+  - draw the live per-biome ambient motion layer
+- `buildTerrainCanvas()` in `game.js` now bakes in building outlines, roof bands, and window styling. Any terrain refactor must preserve those baked details.
+- Twinkling windows are now masked against live terrain alpha so destroyed building sections do not keep glowing after an explosion.
+- The lighting and particle systems intentionally avoid very soft, modern-looking effects. If you add new effects, bias toward stepped bands, square clusters, and limited color ramps.
+- Background event scheduling is intentionally much denser now, and per-type caps are higher. If you tune event frequency later, check both `BIOME_EVENT_TABLES` and `scheduleAmbientEvents()`.
 
 ### Error handling
 
@@ -179,6 +248,7 @@ That is used by the client to keep the waiting screen and setup flow in sync wit
 `roundStart`, `gorillaHit`, and `matchOver` now carry enough scoreboard metadata for dynamic-player rendering:
 
 - `playerNames`
+- `playerColors`
 - `playerTeams`
 - `scoreMode`
 - `teamScores`
@@ -194,8 +264,12 @@ The current automated suite verifies:
 4. Blocking a start when a classic lobby has too many connected players
 5. Rejecting brand-new joins during active play
 6. Rejecting `clearMatch` from a non-host
+7. Preserving reconnect reservations in `waiting`
+8. Promoting a new host after timeout
+9. Reporting reserved reconnect slots through `/status`
+10. Reconnect state sync preserving remaining turn time
 
-Anything outside that list should be treated as less protected and rechecked before large refactors.
+Anything outside that list should be treated as less protected and rechecked before large refactors. Browser-only rendering and input behavior still have much lighter automated coverage than the server lifecycle.
 
 ## Remaining Gaps / Cautions
 

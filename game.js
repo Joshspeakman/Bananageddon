@@ -31,36 +31,200 @@
     friendlyFire: true,
     shakeIntensity: 'normal',
     trailStyle: 'dotted',
-    crtOverlay: false,
+    crtOverlay: true,
   };
+  const PLAYER_COLOR_DEFAULTS = Shared.PLAYER_COLOR_DEFAULTS || ['#9D52FF', '#FF8A4C', '#55E9FF', '#A6FF55'];
+  const getDefaultPlayerColor = typeof Shared.getDefaultPlayerColor === 'function'
+    ? Shared.getDefaultPlayerColor
+    : function (slotIdx = 0) {
+      const idx = Math.abs(Math.floor(Number(slotIdx) || 0)) % PLAYER_COLOR_DEFAULTS.length;
+      return PLAYER_COLOR_DEFAULTS[idx];
+    };
+  const sanitizePlayerColor = typeof Shared.sanitizePlayerColor === 'function'
+    ? Shared.sanitizePlayerColor
+    : function (value, fallback = PLAYER_COLOR_DEFAULTS[0]) {
+      const safeFallback = /^#[0-9A-F]{6}$/i.test(fallback || '')
+        ? fallback.toUpperCase()
+        : PLAYER_COLOR_DEFAULTS[0];
+
+      if (typeof value !== 'string') return safeFallback;
+
+      const trimmed = value.trim();
+      const shortMatch = trimmed.match(/^#([0-9a-fA-F]{3})$/);
+      if (shortMatch) {
+        return `#${shortMatch[1].split('').map(ch => ch + ch).join('')}`.toUpperCase();
+      }
+
+      const longMatch = trimmed.match(/^#([0-9a-fA-F]{6})$/);
+      if (longMatch) {
+        return `#${longMatch[1]}`.toUpperCase();
+      }
+
+      return safeFallback;
+    };
+
+  const DEFAULT_MAP_CONFIG = MAP_SIZES.normal || { w: 640, h: 480 };
 
   // ─── Active logical dimensions ─────────────────────────────────────────────
-  let LOGICAL_W = 640;
-  let LOGICAL_H = 480;
+  let LOGICAL_W = DEFAULT_MAP_CONFIG.w;
+  let LOGICAL_H = DEFAULT_MAP_CONFIG.h;
   const GORILLA_W = 28;
   const GORILLA_H = 28;
   let SUN_X = LOGICAL_W / 2;
-  let SUN_Y = 40;
+  let SUN_Y = 68;
   const SUN_RADIUS = 30;
 
   // ─── Biome color palettes ──────────────────────────────────────────────────
   const BIOME_COLORS = {
-    city:        { sky: '#0000AA', buildings: ['#55FFFF', '#FF55FF', '#AAAAAA'], windowLit: '#FFFF55', windowUnlit: '#555555' },
-    desert:      { sky: '#C2A060', buildings: ['#D2A679', '#C4965A', '#B8860B'], windowLit: '#FFD700', windowUnlit: '#8B7355' },
-    arctic:      { sky: '#87CEEB', buildings: ['#B0C4DE', '#87CEEB', '#F0F8FF'], windowLit: '#E0FFFF', windowUnlit: '#708090' },
-    jungle:      { sky: '#004400', buildings: ['#228B22', '#2E8B57', '#006400'], windowLit: '#7FFF00', windowUnlit: '#2F4F2F' },
-    volcanic:    { sky: '#1A0000', buildings: ['#4A0000', '#8B0000', '#333333'], windowLit: '#FF4500', windowUnlit: '#1C1C1C' },
-    moon:        { sky: '#000011', buildings: ['#808080', '#696969', '#A9A9A9'], windowLit: '#CCCCCC', windowUnlit: '#333333' },
-    underwater:  { sky: '#003366', buildings: ['#008B8B', '#006666', '#20B2AA'], windowLit: '#00FFFF', windowUnlit: '#004444' },
-    postapoc:    { sky: '#2A2A1A', buildings: ['#555555', '#666644', '#444444'], windowLit: '#AA8800', windowUnlit: '#333322' },
-    cyberpunk:   { sky: '#0A0A1E', buildings: ['#1A1A2E', '#16213E', '#0F3460'], windowLit: '#FF00FF', windowUnlit: '#1A002E' },
+    city: {
+      sky: '#2440A8',
+      buildings: ['#55FFFF', '#FF55FF', '#AAAAAA'],
+      windowLit: '#FFF26A',
+      windowUnlit: '#23355A',
+      outline: '#060A1A',
+      shadow: '#14285C',
+      highlight: '#9FE8FF',
+      roof: '#0A1A3E',
+      accent: '#FFDC55',
+      sun: '#FFF07A',
+      haze: '#5E86FF',
+      stageFar: '#13256B',
+      stageMid: '#08103C',
+      stageNear: '#060A21',
+    },
+    desert: {
+      sky: '#D8923F',
+      buildings: ['#D2A679', '#C4965A', '#B8860B'],
+      windowLit: '#FFD76D',
+      windowUnlit: '#7A5732',
+      outline: '#1F0E05',
+      shadow: '#8C5427',
+      highlight: '#FFD4A0',
+      roof: '#5B310F',
+      accent: '#FFB347',
+      sun: '#FFE18A',
+      haze: '#F8B46C',
+      stageFar: '#915126',
+      stageMid: '#5A2D12',
+      stageNear: '#2D1507',
+    },
+    arctic: {
+      sky: '#78BCE6',
+      buildings: ['#B0C4DE', '#87CEEB', '#F0F8FF'],
+      windowLit: '#E9FFFF',
+      windowUnlit: '#466480',
+      outline: '#081521',
+      shadow: '#6F9BC0',
+      highlight: '#F8FFFF',
+      roof: '#3A5A79',
+      accent: '#8CF4FF',
+      sun: '#FFF3B8',
+      haze: '#BFE9FF',
+      stageFar: '#7EA8C3',
+      stageMid: '#436684',
+      stageNear: '#1A3142',
+    },
+    jungle: {
+      sky: '#184B22',
+      buildings: ['#228B22', '#2E8B57', '#006400'],
+      windowLit: '#B8FF5A',
+      windowUnlit: '#173420',
+      outline: '#041006',
+      shadow: '#0E4A14',
+      highlight: '#5CCB74',
+      roof: '#07260B',
+      accent: '#E7D950',
+      sun: '#FFE77A',
+      haze: '#2E7A37',
+      stageFar: '#0E3212',
+      stageMid: '#081D0A',
+      stageNear: '#041006',
+    },
+    volcanic: {
+      sky: '#36110A',
+      buildings: ['#4A0000', '#8B0000', '#333333'],
+      windowLit: '#FF7A2C',
+      windowUnlit: '#221010',
+      outline: '#0D0202',
+      shadow: '#4B0E06',
+      highlight: '#C84E18',
+      roof: '#230404',
+      accent: '#FF8A3D',
+      sun: '#FFC16C',
+      haze: '#7A2412',
+      stageFar: '#541107',
+      stageMid: '#250605',
+      stageNear: '#120202',
+    },
+    moon: {
+      sky: '#0A0E22',
+      buildings: ['#808080', '#696969', '#A9A9A9'],
+      windowLit: '#DDE1F2',
+      windowUnlit: '#2B3146',
+      outline: '#02040B',
+      shadow: '#5F6477',
+      highlight: '#D8DCE8',
+      roof: '#393F56',
+      accent: '#A5B1D4',
+      sun: '#E6EAF7',
+      haze: '#354264',
+      stageFar: '#2A344F',
+      stageMid: '#161C30',
+      stageNear: '#090C18',
+    },
+    underwater: {
+      sky: '#0A4B79',
+      buildings: ['#008B8B', '#006666', '#20B2AA'],
+      windowLit: '#86FFF3',
+      windowUnlit: '#033F44',
+      outline: '#021317',
+      shadow: '#045D5D',
+      highlight: '#56D8D0',
+      roof: '#04353B',
+      accent: '#8CF7FF',
+      sun: '#B7F5FF',
+      haze: '#1C8CBD',
+      stageFar: '#0C5F7B',
+      stageMid: '#053542',
+      stageNear: '#02171C',
+    },
+    postapoc: {
+      sky: '#705A2B',
+      buildings: ['#555555', '#666644', '#444444'],
+      windowLit: '#D4A337',
+      windowUnlit: '#2B241C',
+      outline: '#0D0906',
+      shadow: '#3E3428',
+      highlight: '#8C7A56',
+      roof: '#231B14',
+      accent: '#FF9344',
+      sun: '#FFD07B',
+      haze: '#AD7B40',
+      stageFar: '#655031',
+      stageMid: '#382A18',
+      stageNear: '#171008',
+    },
+    cyberpunk: {
+      sky: '#0A1033',
+      buildings: ['#1A1A2E', '#16213E', '#0F3460'],
+      windowLit: '#FF5BE8',
+      windowUnlit: '#100F2B',
+      outline: '#02030B',
+      shadow: '#0A1A4A',
+      highlight: '#4AD6FF',
+      roof: '#070A1A',
+      accent: '#FF5BE8',
+      sun: '#FF8A6B',
+      haze: '#3E57BA',
+      stageFar: '#22195B',
+      stageMid: '#100B31',
+      stageNear: '#050813',
+    },
   };
 
   // ─── Sky colors by time of day ─────────────────────────────────────────────
   const SKY_COLORS = { day: '#0000AA', night: '#000022', dawn: '#0000AA', dusk: '#0000AA' };
   const STAR_COLOR = '#FFFFFF';
-  const GORILLA_COLOR = '#8B5A2B';
-  const GORILLA_DARK = '#5C3317';
   const BANANA_COLOR = '#FFFF55';
   const SUN_COLOR = '#FFFF55';
 
@@ -75,12 +239,17 @@
   terrainCanvas.height = LOGICAL_H;
   let terrainCtx = terrainCanvas.getContext('2d');
   terrainCtx.imageSmoothingEnabled = false;
+  let backdropCanvas = document.createElement('canvas');
+  backdropCanvas.width = LOGICAL_W;
+  backdropCanvas.height = LOGICAL_H;
+  let backdropCtx = backdropCanvas.getContext('2d');
+  backdropCtx.imageSmoothingEnabled = false;
 
   function setLogicalSize(w, h) {
     LOGICAL_W = w;
     LOGICAL_H = h;
     SUN_X = LOGICAL_W / 2;
-    SUN_Y = 40;
+    SUN_Y = 68;
     canvas.width = w;
     canvas.height = h;
     ctx.imageSmoothingEnabled = false;
@@ -88,21 +257,59 @@
     terrainCanvas.height = h;
     terrainCtx = terrainCanvas.getContext('2d');
     terrainCtx.imageSmoothingEnabled = false;
+    backdropCanvas.width = w;
+    backdropCanvas.height = h;
+    backdropCtx = backdropCanvas.getContext('2d');
+    backdropCtx.imageSmoothingEnabled = false;
     Lighting.resize(w, h);
     Particles.resize(w, h);
     Background.resize(w, h);
     resizeCanvas();
   }
 
+  let resizeCanvasFrame = null;
+
+  function scheduleCanvasResize() {
+    if (resizeCanvasFrame !== null) cancelAnimationFrame(resizeCanvasFrame);
+    resizeCanvasFrame = requestAnimationFrame(() => {
+      resizeCanvasFrame = null;
+      resizeCanvas();
+    });
+  }
+
   function resizeCanvas() {
     const container = document.getElementById('game-container');
-    const cw = container.clientWidth;
-    const ch = container.clientHeight;
-    const scale = Math.min(cw / LOGICAL_W, ch / LOGICAL_H);
-    canvas.style.width = Math.floor(LOGICAL_W * scale) + 'px';
-    canvas.style.height = Math.floor(LOGICAL_H * scale) + 'px';
+    if (!container) return;
+    const cw = Math.max(1, container.clientWidth);
+    const containerHeight = Math.max(1, container.clientHeight);
+    const scale = Math.min(cw / LOGICAL_W, containerHeight / LOGICAL_H);
+    const renderWidth = Math.max(1, Math.floor(LOGICAL_W * scale));
+    const renderHeight = Math.max(1, Math.floor(LOGICAL_H * scale));
+    const offsetX = Math.floor((cw - renderWidth) / 2);
+    const offsetY = Math.floor((containerHeight - renderHeight) / 2);
+    container.style.setProperty('--playfield-left', offsetX + 'px');
+    container.style.setProperty('--playfield-top', offsetY + 'px');
+    container.style.setProperty('--playfield-width', renderWidth + 'px');
+    container.style.setProperty('--playfield-height', renderHeight + 'px');
+    canvas.style.width = renderWidth + 'px';
+    canvas.style.height = renderHeight + 'px';
+    canvas.style.left = Math.floor(offsetX + (renderWidth / 2)) + 'px';
+    canvas.style.top = Math.floor(offsetY + (renderHeight / 2)) + 'px';
   }
-  window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('resize', (() => {
+    let _resizeTimer = null;
+    return () => {
+      if (_resizeTimer) clearTimeout(_resizeTimer);
+      _resizeTimer = setTimeout(() => { _resizeTimer = null; scheduleCanvasResize(); }, 80);
+    };
+  })());
+  if (window.ResizeObserver) {
+    const layoutObserver = new ResizeObserver(() => scheduleCanvasResize());
+    ['game-container'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) layoutObserver.observe(el);
+    });
+  }
   resizeCanvas();
 
   // ─── Seeded PRNG (mulberry32, must match server) ───────────────────────────
@@ -115,6 +322,133 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function hexToRgb(hexColor) {
+    const hex = (hexColor || '#000000').replace('#', '');
+    if (hex.length === 3) {
+      return {
+        r: parseInt(hex[0] + hex[0], 16),
+        g: parseInt(hex[1] + hex[1], 16),
+        b: parseInt(hex[2] + hex[2], 16),
+      };
+    }
+    return {
+      r: parseInt(hex.slice(0, 2), 16),
+      g: parseInt(hex.slice(2, 4), 16),
+      b: parseInt(hex.slice(4, 6), 16),
+    };
+  }
+
+  function blendHex(baseColor, tintColor, amount) {
+    const a = clamp(amount, 0, 1);
+    const base = hexToRgb(baseColor);
+    const tint = hexToRgb(tintColor);
+    const r = Math.round(base.r + (tint.r - base.r) * a);
+    const g = Math.round(base.g + (tint.g - base.g) * a);
+    const b = Math.round(base.b + (tint.b - base.b) * a);
+    return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+  }
+
+  function alphaColor(color, alpha) {
+    const rgb = hexToRgb(color);
+    return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${clamp(alpha, 0, 1).toFixed(3)})`;
+  }
+
+  function getRoundPalette() {
+    return BIOME_COLORS[roundBiome] || BIOME_COLORS.city;
+  }
+
+  function fillOutlinedRect(target, x, y, w, h, outline, fill) {
+    if (w <= 0 || h <= 0) return;
+    target.fillStyle = outline;
+    target.fillRect(x - 1, y - 1, w + 2, h + 2);
+    target.fillStyle = fill;
+    target.fillRect(x, y, w, h);
+  }
+
+  function fillSpriteRect(target, x, y, w, h, colors, options) {
+    if (w <= 0 || h <= 0) return;
+    const opts = options || {};
+    fillOutlinedRect(target, x, y, w, h, colors.outline, colors.fill);
+
+    if (opts.highlight !== false && w >= 4 && h >= 4) {
+      target.fillStyle = colors.highlight;
+      target.fillRect(x + 1, y + 1, Math.max(1, Math.min(3, Math.floor(w * 0.25))), Math.max(1, h - 3));
+      target.fillRect(x + 1, y + 1, Math.max(1, w - 3), 1);
+    }
+    if (opts.shadow !== false && w >= 4 && h >= 4) {
+      target.fillStyle = colors.shadow;
+      target.fillRect(x + w - 3, y + 1, 2, Math.max(1, h - 2));
+      target.fillRect(x + 1, y + h - 2, Math.max(1, w - 2), 1);
+    }
+    if (opts.inner && w >= 6 && h >= 6) {
+      target.fillStyle = opts.inner;
+      target.fillRect(x + 3, y + 3, Math.max(1, w - 6), Math.max(1, h - 6));
+    }
+  }
+
+  function getGorillaRamp(color = getDefaultPlayerColor(0)) {
+    const fill = sanitizePlayerColor(color, getDefaultPlayerColor(0));
+    // Only fur follows the player's picked color. Face, beard, palms, eyes,
+    // and outlines are fixed across all players so the picked color reads
+    // cleanly as jersey/fur and doesn't recolor skin and features.
+    return {
+      fill,
+      highlight: blendHex(fill, '#FFFFFF', 0.30),
+      shadow:    blendHex(fill, '#14041E', 0.50),
+      detail:    blendHex(fill, '#FFFFFF', 0.22),
+      glow:      blendHex(fill, '#FFB8FF', 0.18),
+      outline:   '#1a1c22',
+      muzzle:    '#dccca8',
+      face:      '#c09070',
+      hand:      '#b07858',
+      foot:      '#1f1b18',
+    };
+  }
+
+  // Compact Dome sprite: rounded dome head merging into the shoulders, tan
+  // face insert with a cream beard/chin, pink palms at the arm ends.
+  // All values are in logical pixels, relative to the gorilla's center (cy = hips).
+  const GORILLA_SPRITE = Object.freeze({
+    // Dome (head + back merged into one rounded silhouette)
+    headW: 13,
+    headH: 14,
+    headY: -14,
+    headShiftX: 0,
+    // Shoulders (wider strip that flares above the body)
+    shoulderW: 15,
+    shoulderH: 3,
+    // Body barrel
+    bodyW: 10,
+    bodyH: 9,
+    bodyY: 0,
+    // Face insert (tan skin, lower portion of dome)
+    faceW: 9,
+    faceH: 5,
+    faceY: -9,
+    // Beard / chin (cream, sits at dome bottom)
+    beardW: 7,
+    beardH: 3,
+    beardY: -4,
+    // Legs
+    legW: 4,
+    legH: 4,
+    legY: 9,
+    stance: 2,
+    // Arms
+    armW: 4,
+    armH: 12,
+    armX: 10,
+    armY: 0,
+    armLift: 8,
+    // Jaw removed in this sprite, retained as zeros for compat with older refs.
+    jawW: 0,
+    jawH: 0,
+  });
 
   const MAX_PLAYER_SLOTS = 4;
 
@@ -130,13 +464,24 @@
     return Array.from({ length: count }, (_, idx) => idx);
   }
 
+  function buildDefaultPlayerColors(count = MAX_PLAYER_SLOTS) {
+    return Array.from({ length: count }, (_, idx) => getDefaultPlayerColor(idx));
+  }
+
+  function getPlayerColor(playerIdx) {
+    return sanitizePlayerColor(playerColors[playerIdx], getDefaultPlayerColor(playerIdx));
+  }
+
   // ─── Game State ─────────────────────────────────────────────────────────────
   let gameState = 'title';
   let previousState = null;
   let myPlayer = 0;
+  let hostPlayer = 0;
   let myName = 'Player';
+  let myColor = getDefaultPlayerColor(0);
   let scores = buildDefaultScores();
   let playerNames = buildDefaultPlayerNames();
+  let playerColors = buildDefaultPlayerColors();
   let playerTeams = buildDefaultPlayerTeams();
   let scoreMode = 'individual';
   let teamScores = null;
@@ -147,7 +492,12 @@
   let settings = {
     ...DEFAULT_SETTINGS,
     musicEnabled: true,
+    sfxEnabled: true,
   };
+
+  let serverPaused = false;
+  let pausedByPlayer = 0;
+  let pausedByName = '';
 
   // Round state
   let roundBiome = 'city';
@@ -180,6 +530,7 @@
   let bananaTrail = [];
   let previousTrail = [];
   let showBanana = false;
+  let shotPending = false;
   let activeBananaType = 'standard';
 
   // Cluster bananas
@@ -190,7 +541,7 @@
   const TURRET_H = 16;
   let turrets = [];              // {id, ownerIdx, x, y, cx, cy, aimAngle, barrelKick, expireTurn}
   let turretTracers = [];        // {x1,y1,x2,y2,life,maxLife}
-  let turretCharges = [2, 2, 2, 2];
+  let turretCharges = [3, 3, 3, 3];
 
   // Explosion
   let explosions = [];
@@ -260,20 +611,100 @@
   // Session token — persisted in sessionStorage so a page refresh can still reconnect
   let sessionToken = null;
   try { sessionToken = sessionStorage.getItem('mm_token'); } catch(e) {}
+  try {
+    const storedHostPlayer = parseInt(sessionStorage.getItem('mm_host_player'), 10);
+    hostPlayer = Number.isFinite(storedHostPlayer) ? storedHostPlayer : 0;
+  } catch(e) {}
+  try { myColor = sanitizePlayerColor(sessionStorage.getItem('mm_color'), myColor); } catch(e) {}
+  playerColors[0] = myColor;
 
   // Auto-reconnect state
   let reconnectTimer = null;
   let reconnectAttempts = 0;
+  let suppressReconnect = false;
   const MAX_RECONNECT_ATTEMPTS = 20; // 3s intervals ≈ 60s (matches server's 60s timer)
 
   // Building collapse tracking
   let collapsedBuildings = new Set();
+  const DEFAULT_LOCAL_AUDIO_VOLUME = 100;
+  const PLAYER_NAME_INPUT_IDS = ['player-name', 'pause-player-name'];
+  const MUSIC_TOGGLE_CONTROL_IDS = ['music-select', 'pause-music-select'];
+  const SFX_TOGGLE_CONTROL_IDS = ['pause-sfx-select'];
+  const SHAKE_SELECT_IDS = ['shake-select', 'pause-shake-select'];
+  const TRAIL_SELECT_IDS = ['trail-select', 'pause-trail-select'];
+  const CRT_SELECT_IDS = ['crt-select', 'pause-crt-select'];
+  const EFFECTS_QUALITY_CONTROL_IDS = ['effects-quality-select', 'pause-effects-quality-select'];
+  const MUSIC_VOLUME_CONTROL_IDS = ['music-volume', 'pause-music-volume'];
+  const MUSIC_VOLUME_READOUT_IDS = ['music-volume-readout', 'pause-music-volume-readout'];
+  const SFX_VOLUME_CONTROL_IDS = ['sfx-volume', 'pause-sfx-volume'];
+  const SFX_VOLUME_READOUT_IDS = ['sfx-volume-readout', 'pause-sfx-volume-readout'];
+
+  function asIdList(controlIds) {
+    return Array.isArray(controlIds) ? controlIds : [controlIds];
+  }
+
+  function getFirstControl(controlIds) {
+    for (const id of asIdList(controlIds)) {
+      const control = document.getElementById(id);
+      if (control) return control;
+    }
+    return null;
+  }
+
+  function getControlValue(controlIds, fallback = '') {
+    const control = getFirstControl(controlIds);
+    if (!control) return fallback;
+    return control.value;
+  }
+
+  function setControlValues(controlIds, value) {
+    for (const id of asIdList(controlIds)) {
+      const control = document.getElementById(id);
+      if (control) control.value = String(value);
+    }
+  }
+
+  function getPlayerNameInputValue() {
+    return getControlValue(PLAYER_NAME_INPUT_IDS, myName || 'Player').trim().substring(0, 20) || 'Player';
+  }
+
+  function getVolumePercent(controlIds, fallback = DEFAULT_LOCAL_AUDIO_VOLUME) {
+    const control = getFirstControl(controlIds);
+    const parsed = parseInt(control ? control.value : fallback, 10);
+    return clamp(Number.isFinite(parsed) ? parsed : fallback, 0, 100);
+  }
+
+  function setVolumeControl(controlIds, readoutIds, value) {
+    const safeValue = clamp(parseInt(value, 10) || 0, 0, 100);
+    for (const controlId of asIdList(controlIds)) {
+      const control = document.getElementById(controlId);
+      if (control) control.value = String(safeValue);
+    }
+    for (const readoutId of asIdList(readoutIds)) {
+      const readout = document.getElementById(readoutId);
+      if (readout) readout.textContent = `${safeValue}%`;
+    }
+  }
+
+  function updateAudioVolumeControls() {
+    setVolumeControl(MUSIC_VOLUME_CONTROL_IDS, MUSIC_VOLUME_READOUT_IDS, getVolumePercent(MUSIC_VOLUME_CONTROL_IDS));
+    setVolumeControl(SFX_VOLUME_CONTROL_IDS, SFX_VOLUME_READOUT_IDS, getVolumePercent(SFX_VOLUME_CONTROL_IDS));
+  }
+
+  function getMusicVolumeScale() {
+    return getVolumePercent(MUSIC_VOLUME_CONTROL_IDS) / 100;
+  }
+
+  function getSfxVolumeScale() {
+    return isSfxEnabled() ? getVolumePercent(SFX_VOLUME_CONTROL_IDS) / 100 : 0;
+  }
 
   // ─── localStorage persistence ──────────────────────────────────────────────
   function saveSettings() {
     try {
       const s = {};
-      s.playerName = document.getElementById('player-name').value;
+      s.playerName = getPlayerNameInputValue();
+      s.playerColor = sanitizePlayerColor(document.getElementById('player-color').value, myColor);
       s.gameMode = document.getElementById('gamemode-select').value;
       s.roundsToWin = document.getElementById('rounds-to-win').value;
       s.mapSize = document.getElementById('mapsize-select').value;
@@ -287,12 +718,15 @@
       s.explosionRadius = document.getElementById('explosive-select').value;
       s.bananaType = document.getElementById('banana-select').value;
       s.friendlyFire = document.getElementById('friendlyfire-select').value;
-      s.shake = document.getElementById('shake-select').value;
-      s.trail = document.getElementById('trail-select').value;
-      s.crt = document.getElementById('crt-select').value;
-      s.music = document.getElementById('music-select').value;
+      s.shake = getControlValue(SHAKE_SELECT_IDS, 'normal');
+      s.trail = getControlValue(TRAIL_SELECT_IDS, 'dotted');
+      s.crt = getControlValue(CRT_SELECT_IDS, String(settings.crtOverlay));
+      s.music = getControlValue(MUSIC_TOGGLE_CONTROL_IDS, 'true');
+      s.sfxEnabled = getControlValue(SFX_TOGGLE_CONTROL_IDS, 'true');
       s.musicOrder = document.getElementById('music-order-select').value;
-      s.effectsQuality = document.getElementById('effects-quality-select').value;
+      s.musicVolume = getVolumePercent(MUSIC_VOLUME_CONTROL_IDS);
+      s.sfxVolume = getVolumePercent(SFX_VOLUME_CONTROL_IDS);
+      s.effectsQuality = getControlValue(EFFECTS_QUALITY_CONTROL_IDS, '2');
       localStorage.setItem('monkeyMaddnessSettings', JSON.stringify(s));
     } catch (e) { /* ignore */ }
   }
@@ -302,7 +736,11 @@
       const raw = localStorage.getItem('monkeyMaddnessSettings');
       if (!raw) return;
       const s = JSON.parse(raw);
-      if (s.playerName) document.getElementById('player-name').value = s.playerName;
+      if (s.playerName) setControlValues(PLAYER_NAME_INPUT_IDS, s.playerName);
+      if (s.playerColor) {
+        myColor = sanitizePlayerColor(s.playerColor, myColor);
+        document.getElementById('player-color').value = myColor;
+      }
       if (s.gameMode) document.getElementById('gamemode-select').value = s.gameMode;
       if (s.roundsToWin) document.getElementById('rounds-to-win').value = s.roundsToWin;
       if (s.mapSize) document.getElementById('mapsize-select').value = s.mapSize;
@@ -316,16 +754,62 @@
       if (s.explosionRadius) document.getElementById('explosive-select').value = s.explosionRadius;
       if (s.bananaType) document.getElementById('banana-select').value = s.bananaType;
       if (s.friendlyFire) document.getElementById('friendlyfire-select').value = s.friendlyFire;
-      if (s.shake) document.getElementById('shake-select').value = s.shake;
-      if (s.trail) document.getElementById('trail-select').value = s.trail;
-      if (s.crt) document.getElementById('crt-select').value = s.crt;
-      if (s.music) document.getElementById('music-select').value = s.music;
+      if (s.shake) setControlValues(SHAKE_SELECT_IDS, s.shake);
+      if (s.trail) setControlValues(TRAIL_SELECT_IDS, s.trail);
+      if (s.crt) setControlValues(CRT_SELECT_IDS, s.crt);
+      if (s.music) setControlValues(MUSIC_TOGGLE_CONTROL_IDS, s.music);
+      if (s.sfxEnabled) setControlValues(SFX_TOGGLE_CONTROL_IDS, s.sfxEnabled);
       if (s.musicOrder) document.getElementById('music-order-select').value = s.musicOrder;
-      if (s.effectsQuality) document.getElementById('effects-quality-select').value = s.effectsQuality;
+      if (s.musicVolume !== undefined) setVolumeControl(MUSIC_VOLUME_CONTROL_IDS, MUSIC_VOLUME_READOUT_IDS, s.musicVolume);
+      if (s.sfxVolume !== undefined) setVolumeControl(SFX_VOLUME_CONTROL_IDS, SFX_VOLUME_READOUT_IDS, s.sfxVolume);
+      if (s.effectsQuality) setControlValues(EFFECTS_QUALITY_CONTROL_IDS, s.effectsQuality);
     } catch (e) { /* ignore */ }
+    updateAudioVolumeControls();
+  }
+
+  function updatePlayerColorControl() {
+    const colorInput = document.getElementById('player-color');
+    const readout = document.getElementById('player-color-readout');
+    if (!colorInput) return;
+
+    const slotIdx = myPlayer > 0 ? myPlayer - 1 : 0;
+    const color = sanitizePlayerColor(colorInput.value, myColor || getDefaultPlayerColor(slotIdx));
+    colorInput.value = color;
+    colorInput.style.boxShadow = `0 0 0 2px ${alphaColor(color, 0.45)}, 0 0 14px ${alphaColor(color, 0.35)}`;
+    if (readout) readout.textContent = color;
+  }
+
+  function persistSessionIdentity() {
+    try {
+      sessionStorage.setItem('mm_name', myName);
+      sessionStorage.setItem('mm_color', myColor);
+      sessionStorage.setItem('mm_host_player', String(hostPlayer || 0));
+    } catch (e) {}
+  }
+
+  function updateHostPlayer(nextHostPlayer) {
+    const parsed = Math.max(0, Math.floor(Number(nextHostPlayer) || 0));
+    hostPlayer = parsed;
+    try {
+      sessionStorage.setItem('mm_host_player', String(hostPlayer));
+    } catch (e) {}
+  }
+
+  function syncHostPlayerFromMessage(msg) {
+    if (msg && msg.hostPlayer !== undefined) updateHostPlayer(msg.hostPlayer);
+  }
+
+  function getSelectedPlayerColor() {
+    const colorInput = document.getElementById('player-color');
+    const slotIdx = myPlayer > 0 ? myPlayer - 1 : 0;
+    return sanitizePlayerColor(colorInput ? colorInput.value : myColor, myColor || getDefaultPlayerColor(slotIdx));
   }
 
   function syncSetupSelectionsToState() {
+    myName = getPlayerNameInputValue();
+    myColor = getSelectedPlayerColor();
+    playerColors[myPlayer > 0 ? myPlayer - 1 : 0] = myColor;
+    updatePlayerColorControl();
     settings.roundsToWin = parseInt(document.getElementById('rounds-to-win').value, 10) || settings.roundsToWin;
     settings.gameMode = document.getElementById('gamemode-select').value;
     settings.mapSize = document.getElementById('mapsize-select').value;
@@ -339,10 +823,30 @@
     settings.explosionRadius = parseInt(document.getElementById('explosive-select').value, 10) || settings.explosionRadius;
     settings.bananaType = document.getElementById('banana-select').value;
     settings.friendlyFire = document.getElementById('friendlyfire-select').value !== 'false';
-    settings.shakeIntensity = document.getElementById('shake-select').value;
-    settings.trailStyle = document.getElementById('trail-select').value;
-    settings.crtOverlay = document.getElementById('crt-select').value === 'true';
-    settings.musicEnabled = document.getElementById('music-select').value !== 'false';
+    settings.shakeIntensity = getControlValue(SHAKE_SELECT_IDS, settings.shakeIntensity);
+    settings.trailStyle = getControlValue(TRAIL_SELECT_IDS, settings.trailStyle);
+    settings.crtOverlay = getControlValue(CRT_SELECT_IDS, String(settings.crtOverlay)) === 'true';
+    settings.musicEnabled = isMusicEnabled();
+    settings.sfxEnabled = isSfxEnabled();
+  }
+
+  function applyLocalVisualSettingsFromControls() {
+    settings.shakeIntensity = getControlValue(SHAKE_SELECT_IDS, settings.shakeIntensity);
+    settings.trailStyle = getControlValue(TRAIL_SELECT_IDS, settings.trailStyle);
+    settings.crtOverlay = getControlValue(CRT_SELECT_IDS, String(settings.crtOverlay)) === 'true';
+    applyCRTSetting();
+    applyEffectsQualitySetting();
+  }
+
+  function sendPlayerProfile() {
+    if (!Net.isConnected()) return;
+    syncSetupSelectionsToState();
+    Net.send({
+      type: 'setProfile',
+      name: myName,
+      color: myColor,
+    });
+    persistSessionIdentity();
   }
 
   function resetToClassic() {
@@ -359,18 +863,30 @@
     document.getElementById('explosive-select').value = '30';
     document.getElementById('banana-select').value = 'standard';
     document.getElementById('friendlyfire-select').value = 'true';
-    document.getElementById('shake-select').value = 'normal';
-    document.getElementById('trail-select').value = 'dotted';
-    document.getElementById('crt-select').value = 'false';
-    document.getElementById('music-select').value = 'true';
+    setControlValues(SHAKE_SELECT_IDS, 'normal');
+    setControlValues(TRAIL_SELECT_IDS, 'dotted');
+    setControlValues(CRT_SELECT_IDS, 'true');
+    setControlValues(MUSIC_TOGGLE_CONTROL_IDS, 'true');
+    setControlValues(SFX_TOGGLE_CONTROL_IDS, 'true');
     document.getElementById('music-order-select').value = 'forward';
-    document.getElementById('effects-quality-select').value = '2';
+    setControlValues(EFFECTS_QUALITY_CONTROL_IDS, '2');
+    setVolumeControl(MUSIC_VOLUME_CONTROL_IDS, MUSIC_VOLUME_READOUT_IDS, DEFAULT_LOCAL_AUDIO_VOLUME);
+    setVolumeControl(SFX_VOLUME_CONTROL_IDS, SFX_VOLUME_READOUT_IDS, DEFAULT_LOCAL_AUDIO_VOLUME);
     syncSetupSelectionsToState();
+    applyCRTSetting();
+    applyEffectsQualitySetting();
+    applyMusicSetting();
+    applySfxVolumeSetting();
     saveSettings();
   }
 
   // ─── Audio (Web Audio API) ─────────────────────────────────────────────────
   let audioCtx = null;
+  let sfxMasterGain = null;
+  const activeHtmlSfxInstances = new Set();
+  const BG_MUSIC_BASE_VOLUME = 0.3;
+  const VICTORY_MUSIC_BASE_VOLUME = 0.4;
+
   function ensureAudio() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -385,6 +901,110 @@
     return audioCtx;
   }
 
+  function getSfxDestination(ctx) {
+    if (!sfxMasterGain) {
+      sfxMasterGain = ctx.createGain();
+      sfxMasterGain.gain.setValueAtTime(getSfxVolumeScale(), ctx.currentTime);
+      sfxMasterGain.connect(ctx.destination);
+    }
+    return sfxMasterGain;
+  }
+
+  function updateTrackedHtmlSfxInstance(instance) {
+    if (!instance) return;
+    const baseVolume = Number.isFinite(instance._baseSfxVolume) ? instance._baseSfxVolume : 1;
+    instance.volume = getScaledSfxVolume(baseVolume);
+  }
+
+  function registerHtmlSfxInstance(instance, baseVolume = 1) {
+    if (!instance) return null;
+    instance._baseSfxVolume = baseVolume;
+    activeHtmlSfxInstances.add(instance);
+    updateTrackedHtmlSfxInstance(instance);
+    const cleanup = () => activeHtmlSfxInstances.delete(instance);
+    instance.addEventListener('ended', cleanup, { once: true });
+    instance.addEventListener('error', cleanup, { once: true });
+    instance.addEventListener('abort', cleanup, { once: true });
+    return instance;
+  }
+
+  function syncHtmlSfxVolumes() {
+    activeHtmlSfxInstances.forEach(instance => {
+      if (!instance || instance.ended) {
+        activeHtmlSfxInstances.delete(instance);
+        return;
+      }
+      updateTrackedHtmlSfxInstance(instance);
+    });
+  }
+
+  function applySfxVolumeSetting() {
+    settings.sfxEnabled = isSfxEnabled();
+    syncHtmlSfxVolumes();
+    if (!audioCtx) return;
+    const master = getSfxDestination(audioCtx);
+    const now = audioCtx.currentTime;
+    const target = getSfxVolumeScale();
+    master.gain.cancelScheduledValues(now);
+    master.gain.setValueAtTime(master.gain.value, now);
+    master.gain.linearRampToValueAtTime(target, now + 0.05);
+  }
+
+  function getScaledSfxVolume(baseVolume = 1) {
+    return clamp(baseVolume * getSfxVolumeScale(), 0, 1);
+  }
+
+  function getScaledMusicVolume(baseVolume = 1) {
+    return clamp(baseVolume * getMusicVolumeScale(), 0, 1);
+  }
+
+  function createSfx(src, volume) {
+    const audio = new Audio(src);
+    audio.preload = 'auto';
+    audio.volume = volume;
+    audio.onerror = () => console.warn(`[Audio] Failed to load SFX: ${src}`);
+    return audio;
+  }
+
+  function playAudioClip(clip, volume = clip.volume) {
+    try {
+      const ctx = ensureAudio();
+      // Limit concurrent instances to 4 per clip to prevent audio flooding
+      clip._activeCount = (clip._activeCount || 0);
+      if (clip._activeCount >= 4) return null;
+      const instance = new Audio(clip.src);
+      clip._activeCount++;
+      const release = () => {
+        activeHtmlSfxInstances.delete(instance);
+        clip._activeCount = Math.max(0, (clip._activeCount || 1) - 1);
+      };
+      instance.onended = release;
+      instance.onerror = release;
+      instance.onabort = release;
+      try {
+        // Route through the WebAudio gain chain so sfxMasterGain (bound to the
+        // SFX volume slider) controls this clip in real-time alongside all other
+        // WebAudio sounds.  Each clip gets its own gain node for relative level.
+        const srcNode = ctx.createMediaElementSource(instance);
+        const clipGain = ctx.createGain();
+        clipGain.gain.value = volume;
+        srcNode.connect(clipGain).connect(getSfxDestination(ctx));
+      } catch (e) {
+        // createMediaElementSource not supported; fall back to HTML Audio volume.
+        registerHtmlSfxInstance(instance, volume);
+      }
+      instance.play().catch(() => { release(); });
+      return instance;
+    } catch (e) {}
+    return null;
+  }
+
+  const explosionSfx = createSfx('freesound_community-hq-explosion-6288.mp3', 0.42);
+  const turretFireSfx = createSfx('freesound_community-clean-machine-gun-burst-98224.mp3', 0.5);
+  const turretLockSfx = createSfx('freesound_community-beep-warning-6387.mp3', 0.48);
+  const panicSfx = createSfx('u_cs6o615ob2-mono-505080.mp3', 0.54);
+  const gaspSfx = createSfx('freesound_community-gasp-6253.mp3', 0.7);
+
   function playThrowSound() {
     try {
       const ctx = ensureAudio();
@@ -396,7 +1016,7 @@
       osc.frequency.linearRampToValueAtTime(500, t + 0.12);
       gain.gain.setValueAtTime(0.15, t);
       gain.gain.linearRampToValueAtTime(0, t + 0.12);
-      osc.connect(gain).connect(ctx.destination);
+      osc.connect(gain).connect(getSfxDestination(ctx));
       osc.start(t); osc.stop(t + 0.12);
       // Noise burst layer for impact
       const bufSize = Math.floor(ctx.sampleRate * 0.05);
@@ -406,38 +1026,13 @@
       const nSrc = ctx.createBufferSource(); nSrc.buffer = buf;
       const nGain = ctx.createGain(); nGain.gain.setValueAtTime(0.1, t);
       nGain.gain.linearRampToValueAtTime(0, t + 0.05);
-      nSrc.connect(nGain).connect(ctx.destination);
+      nSrc.connect(nGain).connect(getSfxDestination(ctx));
       nSrc.start(t);
     } catch (e) {}
   }
 
   function playTurretBurst() {
-    try {
-      const ctx = ensureAudio();
-      const t = ctx.currentTime;
-      // Short filtered-noise burst — "wild AA chatter"
-      const bufSize = Math.floor(ctx.sampleRate * 0.07);
-      const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufSize);
-      const src = ctx.createBufferSource(); src.buffer = buf;
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.value = 2400;
-      filter.Q.value = 0.8;
-      const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.12, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
-      src.connect(filter).connect(gain).connect(ctx.destination);
-      src.start(t);
-      // Brief square blip for mechanical character
-      const osc = ctx.createOscillator(); const og = ctx.createGain();
-      osc.type = 'square'; osc.frequency.value = 520 + Math.random() * 160;
-      og.gain.setValueAtTime(0.04, t);
-      og.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
-      osc.connect(og).connect(ctx.destination);
-      osc.start(t); osc.stop(t + 0.06);
-    } catch (e) {}
+    playAudioClip(turretFireSfx);
   }
 
   function playTurretDeploySound() {
@@ -450,7 +1045,7 @@
       osc.frequency.exponentialRampToValueAtTime(45, t + 0.2);
       g.gain.setValueAtTime(0.25, t);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-      osc.connect(g).connect(ctx.destination);
+      osc.connect(g).connect(getSfxDestination(ctx));
       osc.start(t); osc.stop(t + 0.3);
 
       const bufSize = Math.floor(ctx.sampleRate * 0.15);
@@ -463,7 +1058,7 @@
       const ng = ctx.createGain();
       ng.gain.setValueAtTime(0.18, t);
       ng.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
-      src.connect(filter).connect(ng).connect(ctx.destination);
+      src.connect(filter).connect(ng).connect(getSfxDestination(ctx));
       src.start(t);
     } catch (e) {}
   }
@@ -477,30 +1072,17 @@
       osc.frequency.exponentialRampToValueAtTime(80, t + 0.3);
       g.gain.setValueAtTime(0.18, t);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
-      osc.connect(g).connect(ctx.destination);
+      osc.connect(g).connect(getSfxDestination(ctx));
       osc.start(t); osc.stop(t + 0.4);
     } catch (e) {}
   }
 
   function playExplosionSound() {
-    const ctx = ensureAudio();
-    const bufferSize = ctx.sampleRate * 0.3;
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
-    }
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(2000, ctx.currentTime);
-    filter.frequency.linearRampToValueAtTime(200, ctx.currentTime + 0.3);
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.3);
-    source.connect(filter).connect(gain).connect(ctx.destination);
-    source.start(ctx.currentTime);
+    playAudioClip(explosionSfx);
+  }
+
+  function playTurretLockSound() {
+    playAudioClip(turretLockSfx);
   }
 
   function playGorillaHitSound() {
@@ -513,7 +1095,7 @@
     osc.frequency.linearRampToValueAtTime(100, ctx.currentTime + 0.5);
     gain.gain.setValueAtTime(0.12, ctx.currentTime + 0.1);
     gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(getSfxDestination(ctx));
     osc.start(ctx.currentTime + 0.1);
     osc.stop(ctx.currentTime + 0.5);
   }
@@ -527,7 +1109,7 @@
         osc.type = 'triangle'; osc.frequency.setValueAtTime(f, t);
         g.gain.setValueAtTime(0.15 - i * 0.04, t);
         g.gain.exponentialRampToValueAtTime(0.001, t + 0.15 + i * 0.05);
-        osc.connect(g).connect(ctx.destination);
+        osc.connect(g).connect(getSfxDestination(ctx));
         osc.start(t); osc.stop(t + 0.2 + i * 0.05);
       });
     } catch (e) {}
@@ -543,7 +1125,7 @@
       osc.frequency.exponentialRampToValueAtTime(80, ctx.currentTime + 0.12);
       gain.gain.setValueAtTime(0.12, ctx.currentTime);
       gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.12);
-      osc.connect(gain).connect(ctx.destination);
+      osc.connect(gain).connect(getSfxDestination(ctx));
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.12);
     } catch (e) {}
@@ -561,7 +1143,7 @@
       lfo.type = 'sine'; lfo.frequency.value = 8; lfoGain.gain.value = 80;
       lfo.connect(lfoGain).connect(osc.frequency);
       gain.gain.setValueAtTime(0.12, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
-      osc.connect(gain).connect(ctx.destination);
+      osc.connect(gain).connect(getSfxDestination(ctx));
       lfo.start(t); osc.start(t); lfo.stop(t + 0.55); osc.stop(t + 0.55);
     } catch (e) {}
   }
@@ -576,7 +1158,7 @@
     osc.frequency.exponentialRampToValueAtTime(20, ctx.currentTime + 0.8);
     gain.gain.setValueAtTime(0.15, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 2);
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(getSfxDestination(ctx));
     osc.start(ctx.currentTime);
     osc.stop(ctx.currentTime + 2);
 
@@ -593,7 +1175,7 @@
     const noiseFilter = ctx.createBiquadFilter();
     noiseFilter.type = 'highpass';
     noiseFilter.frequency.value = 2000;
-    noise.connect(noiseFilter).connect(noiseGain).connect(ctx.destination);
+    noise.connect(noiseFilter).connect(noiseGain).connect(getSfxDestination(ctx));
     noise.start(ctx.currentTime);
   }
 
@@ -606,16 +1188,35 @@
     'reganati-fruity-dx10-synth-ringtone-411349.mp3',
     'reganati-fartysoup-mctriple-414508.mp3',
   ];
+  const TITLE_MUSIC_TRACK = 'reganati-fruity-dx10-synth-ringtone-411349.mp3';
+  const TITLE_MUSIC_INDEX = BG_PLAYLIST.indexOf(TITLE_MUSIC_TRACK);
   let bgTrackIndex = 0;
   let bgAudio = null;
 
   const victoryMusic = new Audio('Victory%20Screen.mp3');
   victoryMusic.loop = false;
-  victoryMusic.volume = 0.4;
+  victoryMusic.volume = getScaledMusicVolume(VICTORY_MUSIC_BASE_VOLUME);
+  victoryMusic.onerror = () => console.warn('[Audio] Failed to load: Victory Screen.mp3');
+
+  function applyMusicVolumeSetting() {
+    if (bgAudio) bgAudio.volume = getScaledMusicVolume(BG_MUSIC_BASE_VOLUME);
+    victoryMusic.volume = getScaledMusicVolume(VICTORY_MUSIC_BASE_VOLUME);
+  }
 
   function isMusicEnabled() {
-    const sel = document.getElementById('music-select');
-    return !sel || sel.value !== 'false';
+    return getControlValue(MUSIC_TOGGLE_CONTROL_IDS, 'true') !== 'false';
+  }
+
+  function isSfxEnabled() {
+    return getControlValue(SFX_TOGGLE_CONTROL_IDS, 'true') !== 'false';
+  }
+
+  function applyEffectsQualitySetting() {
+    const quality = parseInt(getControlValue(EFFECTS_QUALITY_CONTROL_IDS, '2'), 10);
+    const safeQuality = Number.isFinite(quality) ? quality : 2;
+    Lighting.setQuality(safeQuality);
+    Particles.setQuality(safeQuality);
+    Background.setQuality(safeQuality);
   }
 
   // ─── Chat ──────────────────────────────────────────────────────────────────
@@ -641,30 +1242,57 @@
   }
 
   function openChatInput() {
-    const row = document.getElementById('chat-input-row');
     const input = document.getElementById('chat-input');
-    if (!row || !input) return;
-    row.style.display = 'flex';
-    input.value = '';
+    if (!input) return;
     input.focus();
   }
 
   function closeChatInput() {
-    const row = document.getElementById('chat-input-row');
     const input = document.getElementById('chat-input');
-    if (!row || !input) return;
-    row.style.display = 'none';
+    if (!input) return;
     input.blur();
+  }
+
+  function blurFocusedInput() {
+    const activeEl = document.activeElement;
+    if (activeEl && activeEl.tagName === 'INPUT' && typeof activeEl.blur === 'function') {
+      activeEl.blur();
+    }
   }
 
   function sendChatMessage() {
     const input = document.getElementById('chat-input');
     if (!input) return;
     const text = input.value.trim();
+    input.value = '';
     closeChatInput();
     if (!text) return;
     // Server broadcasts back to everyone including us, so no optimistic display needed
     Net.send({ type: 'chat', text });
+  }
+
+  function enableClickClearOnNumericInput(input, fallbackGetter) {
+    if (!input) return;
+
+    input.addEventListener('pointerdown', () => {
+      if (input.disabled) return;
+      input.dataset.clearOnFocus = 'true';
+      input.dataset.restoreValue = input.value;
+    });
+
+    input.addEventListener('focus', () => {
+      if (input.dataset.clearOnFocus !== 'true') return;
+      input.dataset.clearOnFocus = 'false';
+      input.value = '';
+    });
+
+    input.addEventListener('blur', () => {
+      input.dataset.clearOnFocus = 'false';
+      if (input.value.trim() !== '') return;
+      const fallback = String(fallbackGetter());
+      input.value = fallback;
+      input.dataset.restoreValue = fallback;
+    });
   }
 
   function updateMusicHUD() {
@@ -679,8 +1307,16 @@
     }
   }
 
+  function applyCRTSetting() {
+    const overlay = document.getElementById('crt-overlay');
+    const container = document.getElementById('game-container');
+    if (overlay) overlay.style.display = settings.crtOverlay ? 'block' : 'none';
+    if (container) container.classList.toggle('crt-active', !!settings.crtOverlay);
+  }
+
   function applyMusicSetting() {
     settings.musicEnabled = isMusicEnabled();
+    applyMusicVolumeSetting();
     if (!settings.musicEnabled) {
       stopBGMusic();
       stopVictoryMusic();
@@ -689,6 +1325,10 @@
     }
     if (gameState === 'playing') {
       startBGMusic();
+    } else if (gameState === 'title' || gameState === 'setup' || gameState === 'waiting') {
+      startTitleMusic();
+    } else if (gameState === 'matchOver') {
+      startVictoryMusic();
     }
     updateMusicHUD();
   }
@@ -723,9 +1363,19 @@
     }
     bgTrackIndex = ((index % BG_PLAYLIST.length) + BG_PLAYLIST.length) % BG_PLAYLIST.length;
     bgAudio = new Audio(BG_PLAYLIST[bgTrackIndex]);
-    bgAudio.volume = 0.3;
+    bgAudio.volume = getScaledMusicVolume(BG_MUSIC_BASE_VOLUME);
     bgAudio.onended = () => { if (isMusicEnabled()) playBGTrack(nextBGIndex(bgTrackIndex)); };
+    bgAudio.onerror = () => {
+      console.warn(`[Audio] Failed to load track: ${BG_PLAYLIST[bgTrackIndex]}`);
+      if (isMusicEnabled()) playBGTrack(nextBGIndex(bgTrackIndex));
+    };
     bgAudio.play().catch(() => {});
+  }
+
+  function startTitleMusic() {
+    if (!isMusicEnabled() || TITLE_MUSIC_INDEX < 0) return;
+    if (bgAudio && !bgAudio.paused && bgTrackIndex === TITLE_MUSIC_INDEX) return;
+    playBGTrack(TITLE_MUSIC_INDEX);
   }
 
   function startBGMusic() {
@@ -749,6 +1399,7 @@
     if (!isMusicEnabled()) return;
     stopBGMusic();
     victoryMusic.currentTime = 0;
+    applyMusicVolumeSetting();
     victoryMusic.play().catch(() => {});
   }
 
@@ -769,7 +1420,7 @@
       osc.frequency.setValueAtTime(notes[i % notes.length], ctx.currentTime);
       gain.gain.setValueAtTime(0.08, ctx.currentTime);
       gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.1);
-      osc.connect(gain).connect(ctx.destination);
+      osc.connect(gain).connect(getSfxDestination(ctx));
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.1);
       i++;
@@ -794,7 +1445,7 @@
       const src = ctx.createBufferSource(); src.buffer = buf;
       const filt = ctx.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 600;
       const gain = ctx.createGain(); gain.gain.setValueAtTime(0.3, t); gain.gain.linearRampToValueAtTime(0, t + 0.4);
-      src.connect(filt).connect(gain).connect(ctx.destination);
+      src.connect(filt).connect(gain).connect(getSfxDestination(ctx));
       src.start(t);
     } catch (e) {}
   }
@@ -808,7 +1459,7 @@
       const lfoGain = ctx.createGain(); lfoGain.gain.value = 40;
       lfo.connect(lfoGain).connect(osc.frequency);
       const gain = ctx.createGain(); gain.gain.setValueAtTime(0.18, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
-      osc.connect(gain).connect(ctx.destination);
+      osc.connect(gain).connect(getSfxDestination(ctx));
       lfo.start(t); osc.start(t); lfo.stop(t + 0.8); osc.stop(t + 0.8);
     } catch (e) {}
   }
@@ -820,7 +1471,7 @@
       const osc = ctx.createOscillator(); osc.type = 'square';
       osc.frequency.setValueAtTime(400, t); osc.frequency.exponentialRampToValueAtTime(60, t + 0.6);
       const gain = ctx.createGain(); gain.gain.setValueAtTime(0.2, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
-      osc.connect(gain).connect(ctx.destination);
+      osc.connect(gain).connect(getSfxDestination(ctx));
       osc.start(t); osc.stop(t + 0.65);
     } catch (e) {}
   }
@@ -834,7 +1485,7 @@
       const osc = ctx.createOscillator(); const g = ctx.createGain();
       osc.type = 'square'; osc.frequency.setValueAtTime(freq, t);
       g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-      osc.connect(g).connect(ctx.destination); osc.start(t); osc.stop(t + 0.2);
+      osc.connect(g).connect(getSfxDestination(ctx)); osc.start(t); osc.stop(t + 0.2);
     } catch (e) {}
   }
 
@@ -846,7 +1497,7 @@
     osc.frequency.setValueAtTime(800, ctx.currentTime);
     gain.gain.setValueAtTime(0.06, ctx.currentTime);
     gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.05);
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(getSfxDestination(ctx));
     osc.start(ctx.currentTime);
     osc.stop(ctx.currentTime + 0.05);
   }
@@ -863,7 +1514,7 @@
     const master = actx.createGain();
     master.gain.setValueAtTime(0, actx.currentTime);
     master.gain.linearRampToValueAtTime(1, actx.currentTime + 2); // fade in
-    master.connect(actx.destination);
+    master.connect(getSfxDestination(actx));
     nodes.master = master;
 
     if (weather === 'rain' || weather === 'acidrain' || weather === 'storm') {
@@ -1075,31 +1726,40 @@
   }
 
   function drawSky() {
-    // Dawn/dusk get gradient sky from Background; day/night keep flat color
-    if (roundTimeOfDay === 'dawn' || roundTimeOfDay === 'dusk') {
-      Background.renderSky(ctx, roundTimeOfDay, roundBiome);
-    } else {
-      const skyColor = getBiomeSkyColor();
-      ctx.fillStyle = skyColor;
-      ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
-    }
+    Background.renderSky(ctx, roundTimeOfDay, roundBiome);
 
-    // Stars for night only (Background.renderSky handles dawn/dusk stars)
-    if (stars.length > 0 && roundTimeOfDay !== 'dawn' && roundTimeOfDay !== 'dusk') {
+    // Extra star sparkle for pure night rounds so the foreground sky still breathes.
+    if (stars.length > 0 && roundTimeOfDay === 'night') {
       const t = performance.now() / 1000;
-      let starAlpha = 1;
-      if (roundTimeOfDay === 'dawn') starAlpha = 0.3;
-      if (roundTimeOfDay === 'dusk') starAlpha = 0.5;
       for (const s of stars) {
-        const flicker = 0.5 + 0.5 * Math.sin(t * s.twinkleSpeed + s.phase);
-        const alpha = s.brightness * flicker * starAlpha;
+        const flicker = 0.3 + 0.7 * Math.sin(t * s.twinkleSpeed + s.phase);
+        const alpha = s.brightness * flicker * 0.35;
         ctx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(2)})`;
-        ctx.fillRect(Math.floor(s.x), Math.floor(s.y), 2, 2);
+        ctx.fillRect(Math.floor(s.x), Math.floor(s.y), 1, 1);
       }
     }
   }
 
+  // Use the actual terrain alpha as the backdrop mask so carved holes reveal
+  // the backdrop while intact facade pixels still hide it.
+  function maskBackdropWithTerrain(target) {
+    target.save();
+    target.globalCompositeOperation = 'destination-out';
+    target.drawImage(terrainCanvas, 0, 0);
+    target.restore();
+  }
+
+  function drawMaskedBackdrop() {
+    backdropCtx.clearRect(0, 0, LOGICAL_W, LOGICAL_H);
+    Background.renderBackground(backdropCtx);
+    Background.renderEvents(backdropCtx);
+    Particles.renderBehind(backdropCtx);
+    maskBackdropWithTerrain(backdropCtx);
+    ctx.drawImage(backdropCanvas, 0, 0);
+  }
+
   function drawSun() {
+    const palette = getRoundPalette();
     // Adjust sun position for dawn/dusk
     let cx = SUN_X;
     const r = 18;
@@ -1113,12 +1773,27 @@
     if (roundTimeOfDay === 'night') {
       // Moon with face
       const cy = SUN_Y;
-      ctx.fillStyle = '#CCCCCC';
+      ctx.fillStyle = alphaColor(palette.haze, 0.12);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = palette.sun;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = palette.accent;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r - 1, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.fillStyle = alphaColor(palette.highlight, 0.28);
+      ctx.fillRect(cx - 10, cy - 10, 6, 3);
+      ctx.fillRect(cx - 7, cy - 6, 3, 2);
+      ctx.restore();
       // Crescent shadow
-      ctx.fillStyle = '#000022';
+      ctx.fillStyle = palette.stageNear;
       ctx.beginPath();
       ctx.arc(cx + 8, cy - 2, r - 2, 0, Math.PI * 2);
       ctx.fill();
@@ -1128,12 +1803,27 @@
     }
 
     const cy = SUN_Y;
-    const sunColor = SUN_COLOR;
+    const sunColor = palette.sun || SUN_COLOR;
 
+    ctx.fillStyle = alphaColor(palette.haze, 0.12);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 8, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = sunColor;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r - 1, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = alphaColor('#FFFFFF', 0.35);
+    ctx.fillRect(cx - 7, cy - 10, 5, 3);
+    ctx.fillRect(cx - 10, cy - 7, 2, 3);
+    ctx.restore();
 
     // Rays - animated when celebrating
     const rayCount = 8;
@@ -1150,12 +1840,7 @@
       const y1 = cy + Math.sin(angle) * (r + 2);
       const x2 = cx + Math.cos(angle) * (r + rayLen);
       const y2 = cy + Math.sin(angle) * (r + rayLen);
-      ctx.strokeStyle = sunColor;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
+      fillOutlinedRect(ctx, Math.floor((x1 + x2) / 2) - 1, Math.floor((y1 + y2) / 2) - 1, 3, 3, palette.outline, palette.accent);
     }
 
     // Face
@@ -1315,6 +2000,87 @@
         break;
       }
 
+      case 'annoyed': {
+        // One raised eyebrow, slight frown
+        ctx.fillRect(cx - 6, cy - 8, 5, 1);         // left brow normal
+        ctx.fillRect(cx + 1, cy - 9, 5, 1);          // right brow raised
+        ctx.fillRect(cx - 4, cy - 5, 3, 3);          // left eye
+        ctx.fillRect(cx + 2, cy - 5, 3, 3);          // right eye
+        ctx.beginPath();
+        ctx.moveTo(cx - 3, cy + 5);
+        ctx.lineTo(cx + 3, cy + 4);
+        ctx.stroke();
+        break;
+      }
+
+      case 'angry': {
+        // V-shaped angry brows, scowl, whites-of-eyes showing
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, cy - 9); ctx.lineTo(cx - 2, cy - 7); // left brow angled in
+        ctx.moveTo(cx + 6, cy - 9); ctx.lineTo(cx + 2, cy - 7); // right brow angled in
+        ctx.stroke();
+        ctx.lineWidth = 1;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(cx - 5, cy - 5, 4, 3);
+        ctx.fillRect(cx + 1, cy - 5, 4, 3);
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(cx - 4, cy - 4, 2, 2);
+        ctx.fillRect(cx + 2, cy - 4, 2, 2);
+        // Downturned mouth
+        ctx.beginPath();
+        ctx.moveTo(cx - 3, cy + 5);
+        ctx.lineTo(cx - 1, cy + 3);
+        ctx.lineTo(cx + 1, cy + 3);
+        ctx.lineTo(cx + 3, cy + 5);
+        ctx.stroke();
+        break;
+      }
+
+      case 'furious': {
+        // Severe furrowed brows, gritted teeth, red tint
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx - 7, cy - 10); ctx.lineTo(cx - 1, cy - 7);
+        ctx.moveTo(cx + 7, cy - 10); ctx.lineTo(cx + 1, cy - 7);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+        ctx.fillStyle = '#FF3300';
+        ctx.fillRect(cx - 5, cy - 6, 4, 4);
+        ctx.fillRect(cx + 1, cy - 6, 4, 4);
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(cx - 4, cy - 5, 2, 3);
+        ctx.fillRect(cx + 2, cy - 5, 2, 3);
+        // Gritted teeth
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(cx - 4, cy + 3, 8, 3);
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(cx - 3, cy + 3, 1, 3);
+        ctx.fillRect(cx - 1, cy + 3, 1, 3);
+        ctx.fillRect(cx + 1, cy + 3, 1, 3);
+        ctx.fillRect(cx + 3, cy + 3, 1, 3);
+        break;
+      }
+
+      case 'attacking': {
+        // Determined, glaring — brows pressed down hard, tight grimace
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, cy - 8); ctx.lineTo(cx - 2, cy - 6);
+        ctx.moveTo(cx + 6, cy - 8); ctx.lineTo(cx + 2, cy - 6);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+        ctx.fillStyle = '#FF6600';
+        ctx.fillRect(cx - 5, cy - 5, 4, 4);
+        ctx.fillRect(cx + 1, cy - 5, 4, 4);
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(cx - 4, cy - 4, 2, 2);
+        ctx.fillRect(cx + 2, cy - 4, 2, 2);
+        // Tight set mouth
+        ctx.fillRect(cx - 3, cy + 3, 6, 2);
+        break;
+      }
+
       default: {
         // Idle face - simple neutral
         ctx.fillRect(cx - 3, cy - 4, 2, 2);
@@ -1335,7 +2101,6 @@
 
   function initTwinkles() {
     twinkleWindows = [];
-    const biomePalette = BIOME_COLORS[roundBiome] || BIOME_COLORS.city;
     for (const b of buildings) {
       const rng = mulberry32(citySeed + b.x * 1000 + b.y);
       const winW = 4, winH = 4, gap = 2, padX = 4, padY = 4;
@@ -1347,16 +2112,27 @@
               x: wx, y: wy, w: winW, h: winH,
               phase: Math.random() * Math.PI * 2,
               speed: 1.5 + Math.random() * 3,
+              visible: true,
             });
           }
         }
       }
+    }
+    refreshTwinkleVisibility();
+  }
+
+  function refreshTwinkleVisibility() {
+    for (const tw of twinkleWindows) {
+      const sampleX = Math.max(0, Math.min(LOGICAL_W - 1, Math.floor(tw.x + tw.w / 2)));
+      const sampleY = Math.max(0, Math.min(LOGICAL_H - 1, Math.floor(tw.y + tw.h / 2)));
+      tw.visible = terrainCtx.getImageData(sampleX, sampleY, 1, 1).data[3] !== 0;
     }
   }
 
   function drawTwinkles() {
     const now = performance.now() / 1000;
     for (const tw of twinkleWindows) {
+      if (!tw.visible) continue;
       const glow = 0.3 + 0.7 * ((Math.sin(now * tw.speed + tw.phase) + 1) / 2);
       ctx.fillStyle = `rgba(255, 255, 255, ${(glow * 0.45).toFixed(2)})`;
       ctx.fillRect(tw.x, tw.y, tw.w, tw.h);
@@ -1365,39 +2141,172 @@
 
   function buildTerrainCanvas() {
     terrainCtx.clearRect(0, 0, LOGICAL_W, LOGICAL_H);
-    const biomePalette = BIOME_COLORS[roundBiome] || BIOME_COLORS.city;
+    const biomePalette = getRoundPalette();
 
     for (let bi = 0; bi < buildings.length; bi++) {
       if (collapsedBuildings.has(bi)) continue;
       const b = buildings[bi];
       terrainCtx.fillStyle = b.color;
       terrainCtx.fillRect(b.x, b.y, b.w, LOGICAL_H - b.y);
+      terrainCtx.fillStyle = biomePalette.outline;
+      terrainCtx.fillRect(b.x, b.y, b.w, 1);
+      terrainCtx.fillRect(b.x, b.y, 1, LOGICAL_H - b.y);
+      terrainCtx.fillRect(b.x + b.w - 1, b.y, 1, LOGICAL_H - b.y);
+      terrainCtx.fillStyle = biomePalette.shadow;
+      terrainCtx.fillRect(b.x + Math.max(2, Math.floor(b.w * 0.65)), b.y + 1, Math.max(1, Math.ceil(b.w * 0.35) - 1), Math.max(1, LOGICAL_H - b.y - 1));
+      terrainCtx.fillStyle = biomePalette.highlight;
+      terrainCtx.fillRect(b.x + 1, b.y + 1, Math.max(1, Math.min(4, Math.floor(b.w * 0.12))), Math.max(1, LOGICAL_H - b.y - 3));
+      terrainCtx.fillRect(b.x + 1, b.y + 1, Math.max(2, b.w - 2), 2);
+      terrainCtx.fillStyle = biomePalette.roof;
+      terrainCtx.fillRect(b.x + 1, b.y + 3, Math.max(1, b.w - 2), 2);
+      terrainCtx.fillStyle = alphaColor(biomePalette.accent, 0.18);
+      for (let stripeY = b.y + 12; stripeY < LOGICAL_H - 8; stripeY += 22) {
+        terrainCtx.fillRect(b.x + 3, stripeY, Math.max(1, b.w - 6), 1);
+      }
 
       const rng = mulberry32(citySeed + b.x * 1000 + b.y);
-      const winW = 4;
-      const winH = 4;
-      const gap = 2;
+      const winW = 3;
+      const winH = 3;
+      const gap = 3;
       const padX = 4;
-      const padY = 4;
+      const padY = 7;
       for (let wy = b.y + padY; wy < LOGICAL_H - winH - gap; wy += winH + gap) {
         for (let wx = b.x + padX; wx < b.x + b.w - winW - padX; wx += winW + gap) {
-          terrainCtx.fillStyle = rng() > 0.4 ? biomePalette.windowLit : biomePalette.windowUnlit;
-          terrainCtx.fillRect(wx, wy, winW, winH);
+          const lit = rng() > 0.38;
+          fillOutlinedRect(
+            terrainCtx,
+            wx,
+            wy,
+            winW,
+            winH,
+            biomePalette.outline,
+            lit ? biomePalette.windowLit : biomePalette.windowUnlit
+          );
+          if (lit) {
+            terrainCtx.fillStyle = alphaColor('#FFFFFF', 0.35);
+            terrainCtx.fillRect(wx, wy, 1, 1);
+          }
         }
       }
     }
 
     for (const exp of carvedExplosions) {
-      carveExplosion(exp.x, exp.y, exp.radius);
+      applyExplosionDamage(exp.x, exp.y, exp.radius);
     }
+    refreshTwinkleVisibility();
+  }
+
+  function applyExplosionDamage(x, y, radius) {
+    carveExplosion(x, y, radius);
+    refreshTwinkleVisibility();
   }
 
   function carveExplosion(x, y, radius) {
     terrainCtx.save();
     terrainCtx.globalCompositeOperation = 'destination-out';
+    terrainCtx.fillStyle = '#000000'; // fully opaque — destination-out uses source alpha to determine erasure amount
     terrainCtx.beginPath();
     terrainCtx.arc(x, y, radius, 0, Math.PI * 2);
     terrainCtx.fill();
+    terrainCtx.restore();
+  }
+
+  function stampExplosionScar(x, y, radius) {
+    const seed = (
+      citySeed ^
+      ((Math.round(x) * 73856093) >>> 0) ^
+      ((Math.round(y) * 19349663) >>> 0) ^
+      ((Math.round(radius) * 83492791) >>> 0)
+    ) >>> 0;
+    const rng = mulberry32(seed);
+    const palette = getRoundPalette();
+    const ringRadius = Math.max(2, radius - 2);
+    const chunkCount = Math.max(16, Math.round(radius * 2.1));
+    const rimDark = alphaColor('#050201', 0.72);
+    const rimMid = alphaColor(blendHex(palette.outline, '#231109', 0.4), 0.56);
+    const rimLight = alphaColor(blendHex(palette.accent, '#FFF4D8', 0.58), 0.4);
+    const crackColor = alphaColor(blendHex(palette.highlight, '#FFFFFF', 0.35), 0.32);
+
+    // Add a few extra cut-outs around the blast so the facade loss reads as a
+    // broken chunk even on biomes where the sky and building colors are close.
+    terrainCtx.save();
+    terrainCtx.globalCompositeOperation = 'destination-out';
+    const chipCount = Math.max(8, Math.round(radius * 0.55));
+    for (let i = 0; i < chipCount; i++) {
+      const angle = (i / chipCount) * Math.PI * 2 + (rng() - 0.5) * 0.35;
+      const dist = ringRadius - 1 + (rng() - 0.5) * Math.max(3, radius * 0.12);
+      const size = 2 + Math.floor(rng() * 4);
+      const px = Math.round(x + Math.cos(angle) * dist);
+      const py = Math.round(y + Math.sin(angle) * dist);
+      terrainCtx.fillRect(
+        px - Math.floor(size / 2),
+        py - Math.floor(size / 2),
+        size,
+        size
+      );
+    }
+    terrainCtx.restore();
+
+    terrainCtx.save();
+    terrainCtx.globalCompositeOperation = 'source-atop';
+    terrainCtx.fillStyle = rimDark;
+
+    for (let i = 0; i < chunkCount; i++) {
+      const angle = (i / chunkCount) * Math.PI * 2;
+      const wobble = (rng() - 0.5) * Math.max(3, radius * 0.28);
+      const px = Math.round(x + Math.cos(angle) * (ringRadius + wobble));
+      const py = Math.round(y + Math.sin(angle) * (ringRadius + wobble));
+      const size = 2 + Math.floor(rng() * 4);
+      terrainCtx.fillRect(
+        px - Math.floor(size / 2),
+        py - Math.floor(size / 2),
+        size,
+        size
+      );
+    }
+
+    terrainCtx.fillStyle = rimMid;
+    const sootCount = Math.max(8, Math.round(radius * 0.9));
+    for (let i = 0; i < sootCount; i++) {
+      const angle = (i / sootCount) * Math.PI * 2 + (rng() - 0.5) * 0.28;
+      const dist = ringRadius + 1 + (rng() - 0.5) * Math.max(2, radius * 0.18);
+      const width = 2 + Math.floor(rng() * 3);
+      const height = 1 + Math.floor(rng() * 2);
+      const px = Math.round(x + Math.cos(angle) * dist);
+      const py = Math.round(y + Math.sin(angle) * dist);
+      terrainCtx.fillRect(px - Math.floor(width / 2), py - Math.floor(height / 2), width, height);
+    }
+
+    terrainCtx.fillStyle = rimLight;
+    const highlightCount = Math.max(6, Math.round(radius * 0.36));
+    for (let i = 0; i < highlightCount; i++) {
+      const t = highlightCount === 1 ? 0.5 : i / (highlightCount - 1);
+      const angle = -Math.PI * 1.02 + t * Math.PI * 0.8 + (rng() - 0.5) * 0.22;
+      const px = Math.round(x + Math.cos(angle) * Math.max(1, radius - 3));
+      const py = Math.round(y + Math.sin(angle) * Math.max(1, radius - 3));
+      const width = 2 + Math.floor(rng() * 3);
+      const height = 1 + Math.floor(rng() * 2);
+      terrainCtx.fillRect(px, py, width, height);
+    }
+
+    terrainCtx.fillStyle = crackColor;
+    const crackCount = Math.max(3, Math.round(radius * 0.14));
+    for (let i = 0; i < crackCount; i++) {
+      const angle = rng() * Math.PI * 2;
+      const startDist = radius + 1 + rng() * 2;
+      const crackLen = 4 + Math.floor(rng() * Math.max(3, radius * 0.18));
+      const sx = Math.round(x + Math.cos(angle) * startDist);
+      const sy = Math.round(y + Math.sin(angle) * startDist);
+      const dx = Math.round(Math.cos(angle) * crackLen);
+      const dy = Math.round(Math.sin(angle) * crackLen);
+      const steps = Math.max(Math.abs(dx), Math.abs(dy), 1);
+      for (let step = 0; step <= steps; step++) {
+        const px = Math.round(sx + (dx * step) / steps + (rng() - 0.5) * 1.2);
+        const py = Math.round(sy + (dy * step) / steps + (rng() - 0.5) * 1.2);
+        terrainCtx.fillRect(px, py, 1 + (step % 3 === 0 ? 1 : 0), 1);
+      }
+    }
+
     terrainCtx.restore();
   }
 
@@ -1406,56 +2315,269 @@
   // ─── Dancing monkey overlay (match-over screen) ────────────────────────────
   let _danceAnimId = null;
 
+  function drawGorillaGlow(target, cx, cy, ramp) {
+    // Outer soft halo, roughly tracing the dome + body + arm silhouette.
+    target.fillStyle = alphaColor(ramp.glow, 0.11);
+    target.fillRect(cx - 9,  cy - 16, 18, 3);
+    target.fillRect(cx - 12, cy - 13, 24, 14);
+    target.fillRect(cx - 14, cy - 1,   4, 14);
+    target.fillRect(cx + 10, cy - 1,   4, 14);
+    target.fillRect(cx - 11, cy + 12, 22, 4);
+
+    // Tighter inner glow for a stepped pixel halo.
+    target.fillStyle = alphaColor(ramp.glow, 0.20);
+    target.fillRect(cx - 7,  cy - 15, 14, 2);
+    target.fillRect(cx - 10, cy - 12, 20, 13);
+    target.fillRect(cx - 12, cy,       3, 11);
+    target.fillRect(cx + 10, cy,       3, 11);
+    target.fillRect(cx - 9,  cy + 11, 18, 3);
+  }
+
+  function drawGorillaBody(target, cx, cy, ramp) {
+    const s = GORILLA_SPRITE;
+    const domeW = s.headW;
+    const domeTop = cy + s.headY;
+
+    // --- Dome: narrow top arc widening to full dome width ---
+    target.fillStyle = ramp.fill;
+    target.fillRect(cx - 4,                  domeTop,      8,     1);       // row 0 peak
+    target.fillRect(cx - 6,                  domeTop + 1, 12,     1);       // row 1 widen
+    for (let r = 2; r <= 13; r++) {
+      target.fillRect(cx - Math.floor(domeW / 2), domeTop + r, domeW, 1);
+    }
+
+    // Subtle fur highlight on the upper-right dome
+    target.fillStyle = ramp.detail;
+    target.fillRect(cx + 2, domeTop + 1, 3, 1);
+    target.fillRect(cx + 2, domeTop + 2, 4, 2);
+
+    // --- Shoulders (wider strip drawn on top of body barrel) ---
+    target.fillStyle = ramp.fill;
+    target.fillRect(cx - Math.floor(s.bodyW / 2),     cy + s.bodyY, s.bodyW,     s.bodyH);
+    target.fillRect(cx - Math.floor(s.shoulderW / 2), cy + s.bodyY, s.shoulderW, s.shoulderH);
+
+    // --- Face insert (tan skin, sits in the lower dome) ---
+    target.fillStyle = ramp.face;
+    target.fillRect(cx - Math.floor(s.faceW / 2), cy + s.faceY, s.faceW, s.faceH);
+
+    // --- Beard / chin (cream, directly below face insert) ---
+    target.fillStyle = ramp.muzzle;
+    target.fillRect(cx - Math.floor(s.beardW / 2), cy + s.beardY, s.beardW, s.beardH);
+
+    // --- Ears (tiny dome-side bumps) ---
+    target.fillStyle = ramp.fill;
+    target.fillRect(cx - Math.floor(domeW / 2) - 1, domeTop + 5, 1, 2);
+    target.fillRect(cx + Math.floor(domeW / 2),     domeTop + 5, 1, 2);
+
+    // --- Legs ---
+    const leftLegX = cx - s.stance - s.legW;
+    const rightLegX = cx + s.stance;
+    target.fillStyle = ramp.fill;
+    target.fillRect(leftLegX,  cy + s.legY, s.legW, s.legH);
+    target.fillRect(rightLegX, cy + s.legY, s.legW, s.legH);
+    target.fillStyle = ramp.foot;
+    target.fillRect(leftLegX - 1,  cy + s.legY + s.legH - 2, s.legW + 2, 2);
+    target.fillRect(rightLegX - 1, cy + s.legY + s.legH - 2, s.legW + 2, 2);
+  }
+
+  function drawGorillaFace(target, cx, cy, kind, ramp = getGorillaRamp()) {
+    const faceCx = cx + GORILLA_SPRITE.headShiftX;
+    const faceCy = cy + 2;
+
+    // Brow ridge above the eyes (part of the face insert).
+    // The legacy "muzzle patch" is dropped — drawGorillaBody now paints a full
+    // cream beard across the chin, so a second light patch would read as dirt.
+    target.fillStyle = ramp.outline;
+    target.fillRect(faceCx - 4, faceCy - 10, 3, 1);
+    target.fillRect(faceCx + 1, faceCy - 10, 3, 1);
+
+    switch (kind) {
+      case 'panic':
+        target.fillRect(faceCx - 4, faceCy - 10, 4, 3);
+        target.fillRect(faceCx + 1, faceCy - 10, 4, 3);
+        target.fillRect(faceCx - 3, faceCy - 6, 6, 3);
+        break;
+      case 'flinch':
+        target.fillRect(faceCx - 4, faceCy - 8, 3, 1);
+        target.fillRect(faceCx + 1, faceCy - 8, 3, 1);
+        target.fillRect(faceCx - 2, faceCy - 6, 4, 2);
+        break;
+      case 'h':
+        target.fillRect(faceCx - 3, faceCy - 9, 2, 2);
+        target.fillRect(faceCx + 1, faceCy - 9, 2, 2);
+        target.fillRect(faceCx - 3, faceCy - 5, 6, 1);
+        target.fillRect(faceCx - 4, faceCy - 6, 1, 1);
+        target.fillRect(faceCx + 3, faceCy - 6, 1, 1);
+        break;
+      case 'a':
+        target.fillRect(faceCx - 4, faceCy - 10, 3, 1);
+        target.fillRect(faceCx + 2, faceCy - 10, 3, 1);
+        target.fillRect(faceCx - 3, faceCy - 9, 2, 2);
+        target.fillRect(faceCx + 1, faceCy - 9, 2, 2);
+        target.fillRect(faceCx - 3, faceCy - 5, 6, 2);
+        target.fillRect(faceCx - 2, faceCy - 6, 1, 1);
+        target.fillRect(faceCx + 2, faceCy - 6, 1, 1);
+        break;
+      case 't':
+        target.fillRect(faceCx - 3, faceCy - 9, 2, 2);
+        target.fillRect(faceCx + 1, faceCy - 9, 2, 2);
+        target.fillRect(faceCx - 2, faceCy - 6, 4, 2);
+        target.fillStyle = '#FF5588';
+        target.fillRect(faceCx - 1, faceCy - 4, 3, 2);
+        break;
+      case 'w':
+        target.strokeStyle = ramp.outline;
+        target.lineWidth = 1;
+        target.beginPath();
+        target.arc(faceCx - 3, faceCy - 9, 2, 0, Math.PI * 2);
+        target.stroke();
+        target.beginPath();
+        target.arc(faceCx + 3, faceCy - 9, 2, 0, Math.PI * 2);
+        target.stroke();
+        target.fillStyle = ramp.outline;
+        target.fillRect(faceCx - 2, faceCy - 5, 4, 1);
+        break;
+      case 's':
+        target.fillRect(faceCx - 3, faceCy - 10, 3, 1);
+        target.fillRect(faceCx - 3, faceCy - 9, 2, 1);
+        target.fillRect(faceCx + 1, faceCy - 9, 2, 2);
+        target.fillRect(faceCx - 2, faceCy - 5, 4, 1);
+        target.fillRect(faceCx + 2, faceCy - 6, 1, 1);
+        break;
+      case 'x':
+        target.fillRect(faceCx - 4, faceCy - 10, 1, 1); target.fillRect(faceCx - 3, faceCy - 9, 1, 1);
+        target.fillRect(faceCx - 2, faceCy - 8, 1, 1); target.fillRect(faceCx - 4, faceCy - 8, 1, 1);
+        target.fillRect(faceCx - 2, faceCy - 10, 1, 1);
+        target.fillRect(faceCx + 2, faceCy - 10, 1, 1); target.fillRect(faceCx + 3, faceCy - 9, 1, 1);
+        target.fillRect(faceCx + 4, faceCy - 8, 1, 1); target.fillRect(faceCx + 2, faceCy - 8, 1, 1);
+        target.fillRect(faceCx + 4, faceCy - 10, 1, 1);
+        target.fillRect(faceCx - 1, faceCy - 5, 2, 1);
+        break;
+      case 'c':
+        target.fillRect(faceCx - 3, faceCy - 9, 2, 2);
+        target.fillRect(faceCx + 1, faceCy - 9, 2, 2);
+        target.fillRect(faceCx - 3, faceCy - 5, 6, 2);
+        target.fillRect(faceCx - 2, faceCy - 4, 1, 1);
+        target.fillRect(faceCx + 3, faceCy - 4, 1, 1);
+        target.fillStyle = '#55AAFF';
+        target.fillRect(faceCx - 4, faceCy - 7, 1, 2);
+        target.fillRect(faceCx + 4, faceCy - 7, 1, 2);
+        break;
+      case 'frustrated':
+        target.fillRect(faceCx - 4, faceCy - 10, 3, 1);
+        target.fillRect(faceCx + 2, faceCy - 10, 3, 1);
+        target.fillRect(faceCx - 3, faceCy - 8, 2, 1);
+        target.fillRect(faceCx + 1, faceCy - 8, 2, 1);
+        target.fillRect(faceCx - 3, faceCy - 5, 2, 1);
+        target.fillRect(faceCx, faceCy - 5, 2, 1);
+        target.fillRect(faceCx + 3, faceCy - 5, 1, 1);
+        break;
+      case 'bored':
+        target.fillRect(faceCx - 4, faceCy - 8, 3, 1);
+        target.fillRect(faceCx + 1, faceCy - 8, 3, 1);
+        target.fillRect(faceCx - 2, faceCy - 4, 3, 1);
+        break;
+      case 'phew':
+        target.fillRect(faceCx - 3, faceCy - 8, 2, 1);
+        target.fillRect(faceCx + 1, faceCy - 8, 2, 1);
+        target.fillRect(faceCx - 2, faceCy - 5, 4, 2);
+        break;
+      default:
+        // Neutral face: eyes only. The cream beard already reads as the muzzle.
+        target.fillRect(faceCx - 3, faceCy - 9, 2, 2);
+        target.fillRect(faceCx + 1, faceCy - 9, 2, 2);
+    }
+  }
+
+  function drawGorillaArms(target, cx, cy, pose, isPanicking, ramp = getGorillaRamp(), side = -1) {
+    const sprite = GORILLA_SPRITE;
+    const leftX = cx - sprite.armX;
+    const rightX = cx + sprite.armX - sprite.armW;
+    const downY = cy + sprite.armY;
+    const upY = downY - sprite.armLift;
+
+    const arm = (x, y) => {
+      target.fillStyle = ramp.fill;
+      target.fillRect(x, y, sprite.armW, sprite.armH);
+      // Contrasting pink palm across the bottom of the arm (extends 1px past
+      // the arm to match the reference-image silhouette).
+      target.fillStyle = ramp.hand;
+      target.fillRect(x, y + sprite.armH - 2, sprite.armW + 1, 2);
+    };
+
+    switch (pose) {
+      case 0:
+        if (isPanicking) {
+          arm(leftX, upY);
+          arm(rightX, upY);
+        } else {
+          arm(leftX, downY);
+          arm(rightX, downY);
+        }
+        break;
+      case 1:
+        arm(leftX, downY);
+        arm(rightX, upY);
+        break;
+      case 2:
+        arm(leftX, upY);
+        arm(rightX, downY);
+        break;
+      case 3:
+        arm(leftX, upY);
+        arm(rightX, upY);
+        break;
+      case 4:
+        arm(leftX, downY + 2);
+        arm(rightX, downY + 2);
+        break;
+      case 5:
+        arm(leftX, downY);
+        target.fillStyle = ramp.fill;
+        target.fillRect(cx - 4, cy - 10, 10, 3);
+        target.fillStyle = ramp.outline;
+        target.fillRect(cx - 4, cy - 8, 2, 1);
+        target.fillRect(cx + 4, cy - 8, 2, 1);
+        break;
+      case 6: {
+        const waveNudge = Math.round(Math.sin(performance.now() / 105 + cx * 0.09) * 2);
+        if (side < 0) {
+          arm(leftX, downY + 1);
+          arm(rightX, upY - 1);
+          target.fillStyle = ramp.fill;
+          target.fillRect(rightX - 1, upY - 2, 6, 2);
+          target.fillRect(rightX + 1 + waveNudge, upY - 4, 2, 2);
+          target.fillStyle = ramp.outline;
+          target.fillRect(rightX - 1, upY - 1, 1, 1);
+          target.fillRect(rightX + 2 + waveNudge, upY - 3, 1, 1);
+        } else {
+          arm(leftX, upY - 1);
+          arm(rightX, downY + 1);
+          target.fillStyle = ramp.fill;
+          target.fillRect(leftX - 1, upY - 2, 6, 2);
+          target.fillRect(leftX + 1 + waveNudge, upY - 4, 2, 2);
+          target.fillStyle = ramp.outline;
+          target.fillRect(leftX + 4, upY - 1, 1, 1);
+          target.fillRect(leftX + 1 + waveNudge, upY - 3, 1, 1);
+        }
+        break;
+      }
+    }
+  }
+
+  function drawGorillaSprite(target, cx, cy, pose, faceKind, isPanicking, ramp = getGorillaRamp(), side = -1) {
+    drawGorillaBody(target, cx, cy, ramp);
+    drawGorillaFace(target, cx, cy, faceKind, ramp);
+    drawGorillaArms(target, cx, cy, pose, isPanicking, ramp, side);
+  }
+
   // Self-contained gorilla renderer for arbitrary canvas contexts.
   // cx/cy is the center point; sc is pixel scale; mirror flips horizontally.
-  function drawDancingMonkey(c, cx, cy, sc, pose, face, mirror) {
-    const GC = GORILLA_COLOR;
-    const GD = GORILLA_DARK;
+  function drawDancingMonkey(c, cx, cy, sc, pose, face, mirror, color) {
     c.save();
     c.translate(cx, cy);
     c.scale(mirror ? -sc : sc, sc);
-
-    // Body
-    c.fillStyle = GC;
-    c.fillRect(-8, -6, 16, 14);
-    // Head
-    c.fillRect(-6, -12, 12, 8);
-    // Legs
-    c.fillRect(-6, 8, 5, 6);
-    c.fillRect(1,  8, 5, 6);
-
-    // Arms
-    switch (pose) {
-      case 0: c.fillRect(-12, -4, 4, 12); c.fillRect(8, -4, 4, 12); break; // both down
-      case 1: c.fillRect(-12, -4, 4, 12); c.fillRect(8,-14, 4, 12); break; // R up
-      case 2: c.fillRect(-12,-14, 4, 12); c.fillRect(8, -4, 4, 12); break; // L up
-      case 3: c.fillRect(-12,-14, 4, 12); c.fillRect(8,-14, 4, 12); break; // both up
-      case 4: c.fillRect(-12, -2, 4, 12); c.fillRect(8, -2, 4, 12); break; // slight up
-    }
-
-    // Face
-    c.fillStyle = GD;
-    switch (face) {
-      case 'h': // happy
-        c.fillRect(-3, -9, 2, 2);
-        c.fillRect( 1, -9, 2, 2);
-        c.fillRect(-3, -5, 6, 1);
-        c.fillRect(-4, -6, 1, 1);
-        c.fillRect( 3, -6, 1, 1);
-        break;
-      case 't': // tongue out
-        c.fillRect(-3, -9, 2, 2);
-        c.fillRect( 1, -9, 2, 2);
-        c.fillRect(-2, -6, 4, 2);
-        c.fillStyle = '#FF5588';
-        c.fillRect(-1, -4, 3, 2);
-        break;
-      default: // normal
-        c.fillRect(-3, -9, 2, 2);
-        c.fillRect( 1, -9, 2, 2);
-        c.fillRect(-2, -6, 4, 2);
-    }
-
+    drawGorillaSprite(c, 0, 0, pose, face, false, getGorillaRamp(color), mirror ? 1 : -1);
     c.restore();
   }
 
@@ -1477,6 +2599,8 @@
     const LCY = lCanvas.height * 0.58;
     const RCX = rCanvas.width  / 2;
     const RCY = rCanvas.height * 0.58;
+    const leftColor = getPlayerColor(0);
+    const rightColor = getPlayerColor(1);
 
     function frame() {
       const t    = Date.now();
@@ -1491,9 +2615,9 @@
       lc.clearRect(0, 0, lCanvas.width, lCanvas.height);
       rc.clearRect(0, 0, rCanvas.width, rCanvas.height);
 
-      drawDancingMonkey(lc, LCX, LCY - lBounce, SC, pose, face, false);
+      drawDancingMonkey(lc, LCX, LCY - lBounce, SC, pose, face, false, leftColor);
       // Right monkey faces left (mirror)
-      drawDancingMonkey(rc, RCX, RCY - rBounce, SC, pose, face, true);
+      drawDancingMonkey(rc, RCX, RCY - rBounce, SC, pose, face, true, rightColor);
 
       _danceAnimId = requestAnimationFrame(frame);
     }
@@ -1514,137 +2638,13 @@
   }
 
 
-  function drawGorillaFace(cx, cy, kind) {
-    ctx.fillStyle = GORILLA_DARK;
-    switch (kind) {
-      case 'panic':
-        ctx.fillRect(cx - 4, cy - 10, 4, 3);
-        ctx.fillRect(cx + 1, cy - 10, 4, 3);
-        ctx.fillRect(cx - 3, cy - 6, 6, 3);
-        break;
-      case 'flinch':
-        ctx.fillRect(cx - 4, cy - 8, 3, 1);
-        ctx.fillRect(cx + 1, cy - 8, 3, 1);
-        ctx.fillRect(cx - 2, cy - 6, 4, 2);
-        break;
-      case 'h': // happy
-        ctx.fillRect(cx - 3, cy - 9, 2, 2);
-        ctx.fillRect(cx + 1, cy - 9, 2, 2);
-        ctx.fillRect(cx - 3, cy - 5, 6, 1);
-        ctx.fillRect(cx - 4, cy - 6, 1, 1);
-        ctx.fillRect(cx + 3, cy - 6, 1, 1);
-        break;
-      case 'a': // angry
-        ctx.fillRect(cx - 4, cy - 10, 3, 1);
-        ctx.fillRect(cx + 2, cy - 10, 3, 1);
-        ctx.fillRect(cx - 3, cy - 9, 2, 2);
-        ctx.fillRect(cx + 1, cy - 9, 2, 2);
-        ctx.fillRect(cx - 3, cy - 5, 6, 2);
-        ctx.fillRect(cx - 2, cy - 6, 1, 1);
-        ctx.fillRect(cx + 2, cy - 6, 1, 1);
-        break;
-      case 't': // tongue out
-        ctx.fillRect(cx - 3, cy - 9, 2, 2);
-        ctx.fillRect(cx + 1, cy - 9, 2, 2);
-        ctx.fillRect(cx - 2, cy - 6, 4, 2);
-        ctx.fillStyle = '#FF5588';
-        ctx.fillRect(cx - 1, cy - 4, 3, 2);
-        break;
-      case 'w': // woozy/dizzy
-        ctx.strokeStyle = GORILLA_DARK; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(cx - 3, cy - 9, 2, 0, Math.PI*2); ctx.stroke();
-        ctx.beginPath(); ctx.arc(cx + 3, cy - 9, 2, 0, Math.PI*2); ctx.stroke();
-        ctx.fillStyle = GORILLA_DARK;
-        ctx.fillRect(cx - 2, cy - 5, 4, 1);
-        break;
-      case 's': // smug
-        ctx.fillRect(cx - 3, cy - 10, 3, 1);
-        ctx.fillRect(cx - 3, cy - 9, 2, 1);
-        ctx.fillRect(cx + 1, cy - 9, 2, 2);
-        ctx.fillRect(cx - 2, cy - 5, 4, 1);
-        ctx.fillRect(cx + 2, cy - 6, 1, 1);
-        break;
-      case 'x': // x-eyes
-        ctx.fillRect(cx - 4, cy - 10, 1, 1); ctx.fillRect(cx - 3, cy - 9, 1, 1);
-        ctx.fillRect(cx - 2, cy - 8, 1, 1); ctx.fillRect(cx - 4, cy - 8, 1, 1);
-        ctx.fillRect(cx - 2, cy - 10, 1, 1);
-        ctx.fillRect(cx + 2, cy - 10, 1, 1); ctx.fillRect(cx + 3, cy - 9, 1, 1);
-        ctx.fillRect(cx + 4, cy - 8, 1, 1); ctx.fillRect(cx + 2, cy - 8, 1, 1);
-        ctx.fillRect(cx + 4, cy - 10, 1, 1);
-        ctx.fillRect(cx - 1, cy - 5, 2, 1);
-        break;
-      case 'c': // crying
-        ctx.fillRect(cx - 3, cy - 9, 2, 2);
-        ctx.fillRect(cx + 1, cy - 9, 2, 2);
-        ctx.fillRect(cx - 3, cy - 5, 6, 2);
-        ctx.fillRect(cx - 2, cy - 4, 1, 1); ctx.fillRect(cx + 3, cy - 4, 1, 1);
-        ctx.fillStyle = '#55AAFF';
-        ctx.fillRect(cx - 4, cy - 7, 1, 2); ctx.fillRect(cx + 4, cy - 7, 1, 2);
-        break;
-      case 'frustrated':
-        ctx.fillRect(cx - 4, cy - 10, 3, 1);
-        ctx.fillRect(cx + 2, cy - 10, 3, 1);
-        ctx.fillRect(cx - 3, cy - 8, 2, 1);
-        ctx.fillRect(cx + 1, cy - 8, 2, 1);
-        ctx.fillRect(cx - 3, cy - 5, 2, 1); ctx.fillRect(cx, cy - 5, 2, 1); ctx.fillRect(cx + 3, cy - 5, 1, 1);
-        break;
-      case 'bored':
-        ctx.fillRect(cx - 4, cy - 8, 3, 1);
-        ctx.fillRect(cx + 1, cy - 8, 3, 1);
-        ctx.fillRect(cx - 2, cy - 4, 3, 1);
-        break;
-      case 'phew':
-        ctx.fillRect(cx - 3, cy - 8, 2, 1);
-        ctx.fillRect(cx + 1, cy - 8, 2, 1);
-        ctx.fillRect(cx - 2, cy - 5, 4, 2);
-        break;
-      default: // normal
-        ctx.fillRect(cx - 3, cy - 9, 2, 2);
-        ctx.fillRect(cx + 1, cy - 9, 2, 2);
-        ctx.fillRect(cx - 2, cy - 6, 4, 2);
-    }
-  }
-
-  function drawGorillaArms(cx, cy, pose, isPanicking) {
-    ctx.fillStyle = GORILLA_COLOR;
-    switch (pose) {
-      case 0:
-        if (isPanicking) {
-          ctx.fillRect(cx - 12, cy - 14, 4, 12);
-          ctx.fillRect(cx + 8, cy - 14, 4, 12);
-        } else {
-          ctx.fillRect(cx - 12, cy - 4, 4, 12);
-          ctx.fillRect(cx + 8, cy - 4, 4, 12);
-        }
-        break;
-      case 1:
-        ctx.fillRect(cx - 12, cy - 4, 4, 12);
-        ctx.fillRect(cx + 8, cy - 14, 4, 12);
-        break;
-      case 2:
-        ctx.fillRect(cx - 12, cy - 14, 4, 12);
-        ctx.fillRect(cx + 8, cy - 4, 4, 12);
-        break;
-      case 3:
-        ctx.fillRect(cx - 12, cy - 14, 4, 12);
-        ctx.fillRect(cx + 8, cy - 14, 4, 12);
-        break;
-      case 4:
-        ctx.fillRect(cx - 12, cy - 2, 4, 12);
-        ctx.fillRect(cx + 8, cy - 2, 4, 12);
-        break;
-      case 5: // phew — one arm across brow
-        ctx.fillRect(cx - 12, cy - 4, 4, 12);
-        ctx.fillRect(cx - 4, cy - 12, 10, 3);
-        break;
-    }
-  }
-
   function drawGorilla(x, y, pose, playerIdx) {
     if (!gorillaVisible[playerIdx]) return;
 
     const baseCx = x + GORILLA_W / 2;
     const baseCy = y + GORILLA_H / 2;
+    const side = getGorillaSide(playerIdx);
+    const ramp = getGorillaRamp(getPlayerColor(playerIdx));
 
     const isPanicking = panicPlayers.has(playerIdx);
     const isFlinching = !!flinchTimers[playerIdx];
@@ -1654,6 +2654,18 @@
     const isMissed    = !!missedTimers[playerIdx];
     const taunt       = getTauntTransform(playerIdx);
     const isWet = roundWeather === 'rain' || roundWeather === 'storm' || roundWeather === 'acidrain';
+    const shouldTurnWave = !taunt &&
+      !isPanicking &&
+      !isFlinching &&
+      !isPhew &&
+      !isFrust &&
+      !isBored &&
+      !isMissed &&
+      pose === 0 &&
+      gameState === 'playing' &&
+      currentPlayer === playerIdx + 1 &&
+      !showBanana &&
+      (performance.now() - turnStartedAt) < 1800;
 
     // Resolve pose + face precedence
     // Taunt > panic > missed > phew > flinch > frustrated > bored > idle pose
@@ -1666,6 +2678,7 @@
     else if (isFlinching) { faceKind = 'flinch'; }
     else if (isFrust) { faceKind = 'frustrated'; effPose = 3; }
     else if (isBored) { faceKind = 'bored'; effPose = 0; }
+    else if (shouldTurnWave) { effPose = 6; faceKind = 'h'; }
 
     // ── Body-level reaction transforms (no-taunt path) ───────────────────────
     // These make tiny face changes READABLE at 28px by moving the whole body.
@@ -1700,6 +2713,9 @@
         // Rage shake
         bodyDx = Math.sin(rNow / 35) * 2;
         bodyDy = Math.sin(rNow / 22) * 1;
+      } else if (shouldTurnWave) {
+        bodyDy = Math.sin(rNow / 210 + playerIdx) * -1.3;
+        bodyDx = side * 0.35;
       }
     }
 
@@ -1718,25 +2734,12 @@
     const cx = baseCx;
     const cy = baseCy;
 
-    // Body
-    ctx.fillStyle = GORILLA_COLOR;
-    ctx.fillRect(cx - 8, cy - 6, 16, 14);
-    // Head
-    ctx.fillRect(cx - 6, cy - 12, 12, 8);
-
-    drawGorillaFace(cx, cy, faceKind);
-
-    // Legs
-    ctx.fillStyle = GORILLA_COLOR;
-    ctx.fillRect(cx - 6, cy + 8, 5, 6);
-    ctx.fillRect(cx + 1, cy + 8, 5, 6);
-
-    drawGorillaArms(cx, cy, effPose, isPanicking);
+    drawGorillaSprite(ctx, cx, cy, effPose, faceKind, isPanicking, ramp, side);
 
     // Wet overlay: blue tint + drip below feet
     if (isWet) {
-      ctx.fillStyle = 'rgba(85, 170, 255, 0.18)';
-      ctx.fillRect(cx - 8, cy - 12, 16, 26);
+      ctx.fillStyle = 'rgba(85, 170, 255, 0.14)';
+      ctx.fillRect(cx - Math.floor(GORILLA_SPRITE.shoulderW / 2), cy + GORILLA_SPRITE.headY, GORILLA_SPRITE.shoulderW, 24);
       ctx.fillStyle = '#55AAFF';
       const dripPhase = (performance.now() / 180 + playerIdx * 2) % 8;
       ctx.fillRect(cx - 5, cy + 14 + dripPhase, 1, 2);
@@ -1813,8 +2816,24 @@
       case 'napalm': return '#FF4400';
       case 'skipper': return '#55AAFF';
       case 'dud': return '#888888';
+      case 'sunflare': return '#FFD700';
       default: return BANANA_COLOR;
     }
+  }
+
+  function drawBananaSprite(fill, outline, highlight, shadow, sizeBias) {
+    const segs = sizeBias > 0
+      ? [[-6, -2, 8, 3], [-1, 1, 6, 3], [4, 3, 3, 2]]
+      : [[-5, -2, 7, 3], [-1, 1, 5, 2], [3, 3, 2, 1]];
+    for (const seg of segs) {
+      fillOutlinedRect(ctx, seg[0], seg[1], seg[2], seg[3], outline, fill);
+    }
+    ctx.fillStyle = highlight;
+    ctx.fillRect(-4, -2, 3, 1);
+    ctx.fillRect(0, 1, 2, 1);
+    ctx.fillStyle = shadow;
+    ctx.fillRect(3, 2, 2, 1);
+    ctx.fillRect(1, 2, 2, 1);
   }
 
   function drawBanana(x, y, frame, type) {
@@ -1822,30 +2841,22 @@
       drawTurretDeployProjectile(x, y, frame);
       return;
     }
-    ctx.fillStyle = getBananaColor(type || activeBananaType);
-    const s = type === 'heavy' ? 6 : 4;
+    const fill = getBananaColor(type || activeBananaType);
+    const outline = blendHex('#3B2205', getRoundPalette().outline, 0.35);
+    const highlight = blendHex(fill, '#FFF8B8', 0.38);
+    const shadow = blendHex(fill, '#5A2300', 0.4);
+    const sizeBias = type === 'heavy' ? 1 : 0;
+
+    ctx.save();
+    ctx.translate(x, y);
     switch (frame % 4) {
-      case 0:
-        ctx.fillRect(x - s, y - 2, s * 2, 4);
-        break;
-      case 1:
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(-Math.PI / 4);
-        ctx.fillRect(-s, -2, s * 2, 4);
-        ctx.restore();
-        break;
-      case 2:
-        ctx.fillRect(x - 2, y - s, 4, s * 2);
-        break;
-      case 3:
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(Math.PI / 4);
-        ctx.fillRect(-s, -2, s * 2, 4);
-        ctx.restore();
-        break;
+      case 1: ctx.rotate(-Math.PI / 4); break;
+      case 2: ctx.rotate(-Math.PI / 2); break;
+      case 3: ctx.rotate(Math.PI / 4); break;
+      default: break;
     }
+    drawBananaSprite(fill, outline, highlight, shadow, sizeBias);
+    ctx.restore();
   }
 
   // Tumbling metal banana — used while a turret is being thrown toward its landing spot.
@@ -1945,12 +2956,16 @@
       case 'smoke':
         for (let i = 0; i < trail.length; i++) {
           if (i % 2 === 0) {
-            const a = alpha * (0.3 + 0.3 * (i / trail.length));
-            ctx.fillStyle = `rgba(180, 180, 180, ${a.toFixed(2)})`;
-            const size = 2 + Math.random() * 3;
-            ctx.beginPath();
-            ctx.arc(trail[i].x, trail[i].y, size, 0, Math.PI * 2);
-            ctx.fill();
+            const a = alpha * (0.25 + 0.45 * (i / trail.length));
+            const px = Math.floor(trail[i].x);
+            const py = Math.floor(trail[i].y);
+            const size = 2 + (i % 3);
+            ctx.fillStyle = `rgba(32, 32, 44, ${a.toFixed(2)})`;
+            ctx.fillRect(px - size, py - size, size + 2, size + 2);
+            ctx.fillStyle = `rgba(155, 155, 168, ${(a * 0.9).toFixed(2)})`;
+            ctx.fillRect(px - size + 1, py - size + 1, size, size);
+            ctx.fillStyle = `rgba(235, 235, 240, ${(a * 0.25).toFixed(2)})`;
+            ctx.fillRect(px - size + 2, py - size + 1, 1, 1);
           }
         }
         break;
@@ -1958,19 +2973,26 @@
         for (let i = 0; i < trail.length; i++) {
           if (i % 2 === 0) {
             const a = alpha * (0.4 + 0.4 * (i / trail.length));
-            const r = 200 + Math.floor(Math.random() * 55);
-            const g = Math.floor(Math.random() * 150);
-            ctx.fillStyle = `rgba(${r}, ${g}, 0, ${a.toFixed(2)})`;
-            const size = 1 + Math.random() * 3;
-            ctx.fillRect(Math.floor(trail[i].x) - 1, Math.floor(trail[i].y) - 1, size, size);
+            const px = Math.floor(trail[i].x);
+            const py = Math.floor(trail[i].y);
+            ctx.fillStyle = `rgba(121, 18, 0, ${(a * 0.85).toFixed(2)})`;
+            ctx.fillRect(px - 2, py - 2, 5, 5);
+            ctx.fillStyle = `rgba(255, 116, 0, ${a.toFixed(2)})`;
+            ctx.fillRect(px - 1, py - 2, 3, 4);
+            ctx.fillStyle = `rgba(255, 240, 120, ${(a * 0.8).toFixed(2)})`;
+            ctx.fillRect(px, py - 2, 1, 2);
           }
         }
         break;
       default: // dotted
-        ctx.fillStyle = `rgba(255, 255, 85, ${alpha})`;
         for (let i = 0; i < trail.length; i++) {
           if (i % 3 === 0) {
-            ctx.fillRect(Math.floor(trail[i].x) - 1, Math.floor(trail[i].y) - 1, 2, 2);
+            const px = Math.floor(trail[i].x);
+            const py = Math.floor(trail[i].y);
+            ctx.fillStyle = `rgba(100, 52, 0, ${(alpha * 0.8).toFixed(2)})`;
+            ctx.fillRect(px - 2, py - 2, 4, 4);
+            ctx.fillStyle = `rgba(255, 246, 133, ${alpha.toFixed(2)})`;
+            ctx.fillRect(px - 1, py - 1, 2, 2);
           }
         }
         break;
@@ -1995,19 +3017,41 @@
         continue;
       }
 
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = BANANA_COLOR;
+      const pulse = Math.max(0.15, Math.sin(exp.progress * 40) * 0.15 + 0.85);
+      const outerColor = alphaColor('#FF6B1A', alpha);
+      const midColor = alphaColor('#FFC938', alpha * pulse);
+      const coreColor = alphaColor('#FFF6C0', alpha);
+
+      ctx.save();
+      ctx.globalAlpha = 1;
+      ctx.translate(exp.x, exp.y);
+      ctx.fillStyle = outerColor;
       ctx.beginPath();
-      ctx.arc(exp.x, exp.y, r, 0, Math.PI * 2);
+      for (let p = 0; p < 12; p++) {
+        const angle = (p / 12) * Math.PI * 2;
+        const radius = p % 2 === 0 ? r : r * 0.55;
+        const px = Math.cos(angle) * radius;
+        const py = Math.sin(angle) * radius;
+        if (p === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
       ctx.fill();
 
-      ctx.strokeStyle = '#FF5500';
-      ctx.lineWidth = 2;
+      ctx.fillStyle = midColor;
       ctx.beginPath();
-      ctx.arc(exp.x, exp.y, r, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.globalAlpha = 1;
+      ctx.arc(0, 0, r * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = coreColor;
+      ctx.fillRect(-Math.max(2, r * 0.18), -Math.max(2, r * 0.18), Math.max(4, r * 0.36), Math.max(4, r * 0.36));
+      ctx.fillStyle = alphaColor('#7A1300', alpha * 0.7);
+      for (let p = 0; p < 8; p++) {
+        const angle = (p / 8) * Math.PI * 2;
+        const dist = r * 0.75;
+        const size = 2 + (p % 2);
+        ctx.fillRect(Math.round(Math.cos(angle) * dist) - 1, Math.round(Math.sin(angle) * dist) - 1, size, size);
+      }
+      ctx.restore();
     }
   }
 
@@ -2032,14 +3076,15 @@
   }
 
   // ─── Death chunks ──────────────────────────────────────────────────────────
-  function spawnDeathChunks(x, y) {
+  function spawnDeathChunks(x, y, playerIdx = 0) {
+    const ramp = getGorillaRamp(getPlayerColor(playerIdx));
     for (let i = 0; i < 12; i++) {
       deathChunks.push({
         x, y,
         vx: (Math.random() - 0.5) * 6,
         vy: -Math.random() * 5 - 2,
         size: 2 + Math.random() * 4,
-        color: Math.random() > 0.5 ? GORILLA_COLOR : GORILLA_DARK,
+        color: Math.random() > 0.5 ? ramp.fill : ramp.shadow,
         life: 1,
       });
     }
@@ -2091,19 +3136,26 @@
 
   // ─── Main render loop ─────────────────────────────────────────────────────
   let lastRenderTime = performance.now();
+  let _renderErrorCount = 0;
   function render() {
+    // Schedule next frame first so the loop never dies even if this frame throws
+    requestAnimationFrame(render);
     const now = performance.now();
     const dt = Math.min((now - lastRenderTime) / 1000, 0.05); // cap at 50ms
     lastRenderTime = now;
+    try {
 
     if (gameState === 'playing' || gameState === 'paused') {
-      // Update systems — world systems respect cinematic time dilation;
-      // camera lerp uses real dt so zoom feels snappy regardless.
-      const worldDt = dt * cinematicTimeScale;
-      Background.update(worldDt);
-      Particles.update(worldDt);
-      Lighting.update(worldDt);
-      updateCam(dt);
+      // worldDt is 0 while paused so explosions / tracers / chunks are frozen
+      const worldDt = gameState === 'playing' ? dt * cinematicTimeScale : 0;
+      if (gameState === 'playing') {
+        // Update systems — world systems respect cinematic time dilation;
+        // camera lerp uses real dt so zoom feels snappy regardless.
+        Background.update(worldDt);
+        Particles.update(worldDt);
+        Lighting.update(worldDt);
+        updateCam(dt);
+      }
 
       ctx.save();
       // Cinematic camera: pivot scale around cam center
@@ -2118,31 +3170,25 @@
       // 1. Sky
       drawSky();
 
-      // 2. Background layers (distant biome elements)
-      Background.renderBackground(ctx);
+      // 2. Backdrop content that should not show through standing building columns.
+      drawMaskedBackdrop();
 
-      // 3. Background events (aurora, distant volcano, whale, etc.)
-      Background.renderEvents(ctx);
-
-      // 4. Sun/Moon
+      // 3. Sun/Moon
       drawSun();
 
-      // 5. Particles behind terrain (fog, glow)
-      Particles.renderBehind(ctx);
-
-      // 6. Terrain & buildings
+      // 4. Terrain & buildings
       drawBuildings();
 
-      // 7. Trails
+      // 5. Trails
       drawTrail(previousTrail, 0.25);
       drawTrail(bananaTrail, 0.5);
 
-      // 8. Gorillas
+      // 6. Gorillas
       for (let gi = 0; gi < gorillas.length; gi++) {
         drawGorilla(gorillas[gi].x, gorillas[gi].y, gorillaAnim[gi], gi);
       }
 
-      // 8.5 Turrets — rendered before bananas so a banana in front occludes
+      // 6.5 Turrets — rendered before bananas so a banana in front occludes
       for (const t of turrets) {
         // Decay barrel kick over real time so recoil feels snappy regardless of cinematic slowdown
         if (t.barrelKick) t.barrelKick = Math.max(0, t.barrelKick - dt * 30);
@@ -2150,38 +3196,38 @@
       }
       drawTurretTracers(worldDt);
 
-      // 9. Banana
+      // 7. Banana
       if (showBanana && banana) {
         drawBanana(banana.x, banana.y, banana.frame, activeBananaType);
       }
 
-      // 10. Cluster bananas
+      // 8. Cluster bananas
       for (const cb of clusterBananas) {
         drawBanana(cb.x, cb.y, Math.floor(cb.x / 10) % 4, 'cluster');
       }
 
-      // 11. Explosions
+      // 9. Explosions
       drawExplosions(worldDt);
 
-      // 12. Napalm
+      // 10. Napalm
       drawNapalmPatches();
 
-      // 13. Death chunks
+      // 11. Death chunks
       updateDeathChunks(worldDt);
       drawDeathChunks();
 
-      // 14. Particles in front (rain, snow, sparks, etc.)
+      // 12. Particles in front (rain, snow, sparks, etc.)
       Particles.renderFront(ctx);
 
       ctx.restore();
 
-      // 15. Lighting overlay (ambient tint, lights, flashes)
+      // 13. Lighting overlay (ambient tint, lights, flashes)
       Lighting.render(ctx);
 
-      // 16. Shadows
-      Lighting.drawShadows(ctx, buildings, gorillas, gorillaVisible, roundTimeOfDay, GORILLA_W, GORILLA_H, LOGICAL_H);
+      // 14. Shadows
+      Lighting.drawShadows(ctx, buildings, collapsedBuildings, gorillas, gorillaVisible, roundTimeOfDay, GORILLA_W, GORILLA_H, LOGICAL_H);
 
-      // 17. Slow-mo overlay
+      // 15. Slow-mo overlay
       if (slowmoActive) {
         ctx.fillStyle = 'rgba(255, 255, 200, 0.08)';
         ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
@@ -2197,7 +3243,12 @@
       }
     }
 
-    requestAnimationFrame(render);
+    } catch (e) {
+      _renderErrorCount++;
+      if (_renderErrorCount <= 10) {
+        console.error('[Render] Error in render loop (frame will continue):', e);
+      }
+    }
   }
 
   // ─── Screen management ────────────────────────────────────────────────────
@@ -2209,6 +3260,7 @@
     if (gameState === 'playing') {
       document.getElementById('hud').classList.add('active');
     }
+    scheduleCanvasResize();
   }
 
   function clearElement(el) {
@@ -2216,7 +3268,7 @@
   }
 
   function isHostPlayer() {
-    return myPlayer === 1;
+    return myPlayer > 0 && myPlayer === hostPlayer;
   }
 
   function getModeConfigLocal(mode = settings.gameMode) {
@@ -2254,7 +3306,7 @@
 
   function hasStoredHostSession() {
     try {
-      return sessionStorage.getItem('mm_player') === '1' &&
+      return sessionStorage.getItem('mm_player') === sessionStorage.getItem('mm_host_player') &&
         !!sessionStorage.getItem('mm_name') &&
         !!sessionStorage.getItem('mm_token');
     } catch (e) {
@@ -2279,10 +3331,20 @@
       const meta = document.createElement('div');
       meta.className = 'hud-team-meta';
 
+      const nameRow = document.createElement('div');
+      nameRow.className = 'hud-name-row';
+
+      const colorChip = document.createElement('span');
+      colorChip.className = 'hud-color-chip';
+      colorChip.style.backgroundColor = getPlayerColor(i);
+      colorChip.style.boxShadow = `0 0 10px ${alphaColor(getPlayerColor(i), 0.45)}`;
+      nameRow.appendChild(colorChip);
+
       const nameSpan = document.createElement('span');
       nameSpan.className = 'hud-pname';
       nameSpan.textContent = getPlayerDisplayName(i);
-      meta.appendChild(nameSpan);
+      nameRow.appendChild(nameSpan);
+      meta.appendChild(nameRow);
 
       const subSpan = document.createElement('span');
       subSpan.className = 'hud-pmeta';
@@ -2396,9 +3458,9 @@
     document.getElementById('maxvel-select').value = settings.maxVelocity;
     document.getElementById('banana-select').value = settings.bananaType;
     document.getElementById('friendlyfire-select').value = String(settings.friendlyFire);
-    document.getElementById('shake-select').value = settings.shakeIntensity;
-    document.getElementById('trail-select').value = settings.trailStyle;
-    document.getElementById('crt-select').value = String(settings.crtOverlay);
+    setControlValues(SHAKE_SELECT_IDS, settings.shakeIntensity);
+    setControlValues(TRAIL_SELECT_IDS, settings.trailStyle);
+    setControlValues(CRT_SELECT_IDS, String(settings.crtOverlay));
   }
 
   function updateSetupPresentation(joining) {
@@ -2454,7 +3516,7 @@
       return;
     }
 
-    if (myPlayer === 1) {
+    if (isHostPlayer()) {
       if (remaining <= 0) {
         statusEl.textContent = 'Lobby ready. Starting match...';
       } else if (remaining === 1) {
@@ -2505,7 +3567,7 @@
         return;
       }
 
-      if (msg.type === 'assigned' && msg.player === 1 && !clearRequested) {
+      if (msg.type === 'assigned' && msg.player === msg.hostPlayer && !clearRequested) {
         clearRequested = true;
         tempWs.send(JSON.stringify({ type: 'clearMatch' }));
         return;
@@ -2525,15 +3587,122 @@
     };
   }
 
+  function disconnectToTitle() {
+    suppressReconnect = true;
+    Net.disconnect();
+    switchToTitle();
+  }
+
+  function clearPauseMenuState() {
+    serverPaused = false;
+    pausedByPlayer = 0;
+    pausedByName = '';
+    previousState = null;
+    const pauseScreen = document.getElementById('pause-screen');
+    if (pauseScreen) pauseScreen.classList.remove('active');
+  }
+
+  function syncPausePresentation() {
+    const titleEl = document.getElementById('pause-title');
+    const statusEl = document.getElementById('pause-status');
+    if (titleEl) titleEl.textContent = 'PAUSED';
+    if (!statusEl) return;
+
+    if (pausedByPlayer > 0 && pausedByPlayer === myPlayer) {
+      statusEl.textContent = 'You paused the match. Both players are frozen until someone resumes.';
+      return;
+    }
+
+    if (pausedByName) {
+      statusEl.textContent = `${pausedByName} paused the match. Both players are frozen until someone resumes.`;
+      return;
+    }
+
+    statusEl.textContent = 'The match is paused. Both players are frozen until someone resumes.';
+  }
+
+  function openPauseMenu() {
+    gameState = 'paused';
+    previousState = 'playing';
+    syncPausePresentation();
+    setControlValues(PLAYER_NAME_INPUT_IDS, myName);
+    document.getElementById('pause-screen').classList.add('active');
+    document.getElementById('hud').classList.add('active');
+    updateAudioVolumeControls();
+    updateInputPanel();
+    scheduleCanvasResize();
+  }
+
+  function closePauseMenu() {
+    document.getElementById('pause-screen').classList.remove('active');
+    gameState = 'playing';
+    previousState = null;
+    document.getElementById('hud').classList.add('active');
+    updateHUD();
+    updateInputPanel();
+    scheduleCanvasResize();
+  }
+
+  function requestPauseState(paused) {
+    if (!Net.isConnected()) return;
+    Net.send({ type: 'setPaused', paused: !!paused });
+  }
+
+  function commitPauseNameChange() {
+    const nextName = getPlayerNameInputValue();
+    setControlValues(PLAYER_NAME_INPUT_IDS, nextName);
+    if (nextName === myName) {
+      saveSettings();
+      return;
+    }
+
+    myName = nextName;
+    saveSettings();
+    sendPlayerProfile();
+  }
+
+  function leaveMatchToTitle() {
+    commitPauseNameChange();
+    suppressReconnect = true;
+    if (Net.isConnected()) {
+      try {
+        Net.send({ type: 'leaveMatch' });
+      } catch (e) {}
+    }
+    setTimeout(() => Net.disconnect(), 50);
+    switchToTitle();
+  }
+
+  function applyPauseState(msg) {
+    serverPaused = !!msg?.paused;
+    pausedByPlayer = Math.max(0, Math.floor(Number(msg?.pausedByPlayer) || 0));
+    pausedByName = typeof msg?.pausedByName === 'string' ? msg.pausedByName : '';
+    syncPausePresentation();
+
+    if (serverPaused) {
+      stopTurnTimerDisplay();
+      openPauseMenu();
+      return;
+    }
+
+    if (gameState === 'paused') {
+      closePauseMenu();
+    } else {
+      clearPauseMenuState();
+    }
+  }
+
   function switchToTitle() {
+    clearPauseMenuState();
     gameState = 'title';
     myPlayer = 0;
+    hostPlayer = 0;
     stopDanceAnimation();
     document.getElementById('hud-bottombar').classList.remove('match-over-active');
     roundBiome = 'city';
     roundTimeOfDay = 'day';
     roundWeather = 'clear';
-    setLogicalSize(640, 480);
+    setLogicalSize(DEFAULT_MAP_CONFIG.w, DEFAULT_MAP_CONFIG.h);
     showScreen('title-screen');
     citySeed = (Math.random() * 0xFFFFFFFF) >>> 0;
     buildings = generateCity(citySeed, 'normal', 'city');
@@ -2545,15 +3714,18 @@
     gorillaVisible = gorillas.map(() => true);
     scores = buildDefaultScores();
     playerNames = buildDefaultPlayerNames();
+    playerColors = buildDefaultPlayerColors();
+    playerColors[0] = myColor;
     playerTeams = buildDefaultPlayerTeams();
     teamScores = null;
     scoreMode = 'individual';
     currentPlayer = 1;
     turrets = [];
     turretTracers = [];
-    turretCharges = [2, 2, 2, 2];
+    turretCharges = [3, 3, 3, 3];
     initTwinkles();
     checkServerStatus();
+    startTitleMusic();
   }
 
   function placeGorillasClient(blds, rng) {
@@ -2571,28 +3743,50 @@
 
   // ─── Server status check (lobby detection) ─────────────────────────────────
   function checkServerStatus() {
+    // Only used to surface the clear-host button when a stored session exists
+    const clearBtn = document.getElementById('clear-host-btn');
+    clearBtn.style.display = 'none';
+    if (!hasStoredHostSession()) return;
+    fetch('/status')
+      .then(r => r.json())
+      .then(data => {
+        if (data.active) clearBtn.style.display = 'inline-block';
+      })
+      .catch(() => {});
+  }
+
+  function searchForGame() {
+    const joinBtn = document.getElementById('join-btn');
+    const spinner = document.getElementById('join-spinner');
     const lobbyEl = document.getElementById('title-lobby');
     const lobbyInfo = document.getElementById('lobby-info');
-    const clearBtn = document.getElementById('clear-host-btn');
-    const joinBtn = document.getElementById('join-btn');
-    const canClear = hasStoredHostSession();
+
+    joinBtn.disabled = true;
     lobbyEl.style.display = 'none';
-    clearBtn.style.display = 'none';
-    joinBtn.style.display = 'none';
+    if (spinner) spinner.style.display = 'inline';
 
     fetch('/status')
       .then(r => r.json())
       .then(data => {
-        if (data.active && data.playerCount > 0) {
-          const names = data.playerNames.join(', ');
-          const stateLabel = data.state === 'playing' ? 'In Progress' : data.state === 'waiting' ? 'Waiting' : data.state;
-          lobbyInfo.textContent = `Game found: ${names} (${stateLabel})`;
+        if (spinner) spinner.style.display = 'none';
+        const visiblePlayers = (Number(data.connectedPlayerCount || data.playerCount || 0) +
+          Number(data.reservedPlayerCount || 0));
+        if (data.active && visiblePlayers > 0) {
+          // Game found — join immediately
+          isJoining = true;
+          switchToSetup(true);
+        } else {
+          lobbyInfo.textContent = 'No active game found. Ask someone to host first!';
           lobbyEl.style.display = 'block';
-          joinBtn.style.display = 'inline-block';
-          if (canClear) clearBtn.style.display = 'inline-block';
+          joinBtn.disabled = false;
         }
       })
-      .catch(() => { /* server unreachable, ignore */ });
+      .catch(() => {
+        if (spinner) spinner.style.display = 'none';
+        lobbyInfo.textContent = 'Could not reach server.';
+        lobbyEl.style.display = 'block';
+        joinBtn.disabled = false;
+      });
   }
 
   let isJoining = false;
@@ -2605,8 +3799,7 @@
 
   document.getElementById('join-btn').addEventListener('click', () => {
     playUIConfirm();
-    isJoining = true;
-    switchToSetup(true);
+    searchForGame();
   });
 
   document.getElementById('clear-host-btn').addEventListener('click', () => {
@@ -2615,22 +3808,31 @@
   });
 
   function switchToSetup(joining) {
+    clearPauseMenuState();
     gameState = 'setup';
     showScreen('setup-screen');
     playUIConfirm();
     loadSettings();
+    document.getElementById('player-color').value = myColor;
     if (Net.isConnected()) {
       applyCurrentSettingsToSetupUI();
-      if (myName) document.getElementById('player-name').value = myName;
+      if (myName) setControlValues(PLAYER_NAME_INPUT_IDS, myName);
+      document.getElementById('player-color').value = myColor;
     }
     syncSetupSelectionsToState();
+    updatePlayerColorControl();
     updateRoundsLabel();
     updateSetupPresentation(joining);
+    applyCRTSetting();
+    startTitleMusic();
     document.getElementById('player-name').focus();
   }
 
   function switchToWaiting() {
+    clearPauseMenuState();
     gameState = 'waiting';
+    const keysOverlay = document.getElementById('keys-overlay');
+    if (keysOverlay) keysOverlay.style.display = 'none';
     stopDanceAnimation();
     document.getElementById('hud-bottombar').classList.remove('match-over-active');
     showScreen('waiting-screen');
@@ -2645,22 +3847,36 @@
         }).catch(() => {});
       };
     }
+    startTitleMusic();
   }
 
   function switchToPlaying() {
+    clearPauseMenuState();
     gameState = 'playing';
+    shotPending = false;
     document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
     document.getElementById('hud').classList.add('active');
     updateHUD();
-    // Pick a random track when starting fresh (music not already playing)
-    if (!bgAudio || bgAudio.paused) {
+    // Replace title music with a gameplay track when the round begins.
+    if (!bgAudio || bgAudio.paused || bgTrackIndex === TITLE_MUSIC_INDEX) {
+      if (bgAudio && !bgAudio.paused) stopBGMusic();
       bgTrackIndex = Math.floor(Math.random() * BG_PLAYLIST.length);
+      if (BG_PLAYLIST.length > 1) {
+        while (bgTrackIndex === TITLE_MUSIC_INDEX) {
+          bgTrackIndex = Math.floor(Math.random() * BG_PLAYLIST.length);
+        }
+      }
     }
     startBGMusic();
+    scheduleCanvasResize();
   }
 
   function switchToMatchOver(winner, finalScores, stats) {
+    clearPauseMenuState();
     gameState = 'matchOver';
+    shotPending = false;
+    closeChatInput();
+    blurFocusedInput();
     const winnerIdx = Math.max(0, (winner | 0) - 1);
     const winnerLabel = scoreMode === 'team' && Array.isArray(teamScores)
       ? getTeamLabel(playerTeams[winnerIdx] || 0)
@@ -2688,6 +3904,7 @@
     // Hide the input panel on matchOver — only chat is relevant
     document.getElementById('input-panel').style.display = 'none';
     updateMatchOverActions();
+    scheduleCanvasResize();
 
     // Start the dancing monkey canvases (winner = 1-indexed → 0-indexed)
     startDanceAnimation(winnerIdx % 2);
@@ -2710,16 +3927,39 @@
 
     drawWindArrow();
 
-    // Show round info
+    // Show round info — always visible during play
     const infoEl = document.getElementById('hud-info');
-    if (roundBiome !== 'city' || roundWeather !== 'clear') {
+    {
+      const BIOME_ICONS = {
+        city:       '🏙',
+        desert:     '🏜',
+        arctic:     '❄️',
+        jungle:     '🌿',
+        volcanic:   '🌋',
+        moon:       '🌕',
+        underwater: '🌊',
+        postapoc:   '☢️',
+        cyberpunk:  '🤖',
+      };
+      const WEATHER_ICONS = {
+        clear:     '☀️',
+        rain:      '🌧',
+        fog:       '🌫',
+        storm:     '⛈',
+        acidrain:  '☣️',
+        sandstorm: '🌪',
+        windshear: '💨',
+        snow:      '🌨',
+      };
+      const biomeLabel = (roundBiome || 'city').charAt(0).toUpperCase() + (roundBiome || 'city').slice(1);
+      const weatherLabel = (roundWeather || 'clear').charAt(0).toUpperCase() + (roundWeather || 'clear').slice(1);
+      const biomeIcon   = BIOME_ICONS[roundBiome]   || '🏙';
+      const weatherIcon = WEATHER_ICONS[roundWeather] || '☀️';
+      infoEl.innerHTML =
+        `<span class="hud-info-biome">${biomeIcon} ${biomeLabel}</span>` +
+        `<span class="hud-info-sep"> · </span>` +
+        `<span class="hud-info-weather">${weatherIcon} ${weatherLabel}</span>`;
       infoEl.style.display = 'block';
-      const parts = [];
-      if (roundBiome !== 'city') parts.push(roundBiome);
-      if (roundWeather !== 'clear') parts.push(roundWeather);
-      infoEl.textContent = parts.join(' / ');
-    } else {
-      infoEl.style.display = 'none';
     }
 
     updateInputPanel();
@@ -2727,66 +3967,61 @@
 
   function updateInputPanel() {
     const panel = document.getElementById('input-panel');
-    const isMyTurn = myPlayer === currentPlayer && gameState === 'playing' && !showBanana;
+    const isMyTurn = myPlayer === currentPlayer && gameState === 'playing' && !showBanana && !shotPending;
 
     // Always show the panel so the bottom bar always has both sections
     panel.style.display = 'flex';
 
-    const ctrlHeader  = panel.querySelector('.ctrl-header');
-    const ctrlInputs  = panel.querySelector('.ctrl-inputs');
-    const fireBtn     = document.getElementById('fire-btn');
-    const tauntBtn    = document.getElementById('taunt-btn');
-    const angleInput  = document.getElementById('input-angle');
-    const velInput    = document.getElementById('input-velocity');
+    const statusEl = document.getElementById('ctrl-header-status');
+    const fireBtn = document.getElementById('fire-btn');
+    const tauntBtn = document.getElementById('taunt-btn');
+    const picnicBtn = document.getElementById('picnic-btn');
+    const angleInput = document.getElementById('input-angle');
+    const velInput = document.getElementById('input-velocity');
+    const velocityRange = document.getElementById('ctrl-velocity-range');
 
-    if (isMyTurn) {
-      // Full controls visible
-      if (ctrlHeader) { ctrlHeader.style.display = ''; ctrlHeader.textContent = '⚡ YOUR SHOT'; }
-      if (ctrlInputs) ctrlInputs.style.display = 'flex';
-      fireBtn.style.display = '';
-      tauntBtn.style.flex = '1';
-      panel.classList.remove('panel-disabled');
-      angleInput.disabled = false;
-      velInput.disabled   = false;
-      fireBtn.disabled    = false;
-      tauntBtn.disabled   = false;
-      velInput.max = maxVelocity;
-      updateAmmoSelect();
-      if (!document.activeElement || document.activeElement === document.body) angleInput.focus();
-    } else {
-      // Waiting: hide everything except taunt button
-      if (ctrlHeader) ctrlHeader.style.display = 'none';
-      if (ctrlInputs) ctrlInputs.style.display = 'none';
-      fireBtn.style.display = 'none';
-      tauntBtn.style.flex = '1 1 100%';
-      panel.classList.add('panel-disabled');
-      tauntBtn.disabled = false;
-      const ammoSel = document.getElementById('ammo-select');
-      if (ammoSel) ammoSel.style.display = 'none';
+    panel.classList.toggle('panel-disabled', !isMyTurn);
+    if (statusEl) statusEl.textContent = isMyTurn ? 'READY TO FIRE' : 'STANDBY';
+
+    angleInput.disabled = !isMyTurn;
+    velInput.disabled = !isMyTurn;
+    velInput.max = maxVelocity;
+    if (velocityRange) velocityRange.textContent = `0-${maxVelocity}`;
+
+    updateAmmoSelect({ interactive: isMyTurn });
+
+    fireBtn.disabled = !isMyTurn;
+    tauntBtn.disabled = false;
+    picnicBtn.disabled = false;
+
+    if (isMyTurn && (!document.activeElement || document.activeElement === document.body)) {
+      angleInput.focus();
     }
+
+    scheduleCanvasResize();
   }
 
-  function updateAmmoSelect() {
+  function updateAmmoSelect({ interactive = myPlayer === currentPlayer && gameState === 'playing' && !showBanana && !shotPending } = {}) {
     const ammoSel = document.getElementById('ammo-select');
     if (!ammoSel) return;
-    ammoSel.style.display = '';
     const myIdx = myPlayer - 1;
     const charges = (myIdx >= 0 && myIdx < 4) ? (turretCharges[myIdx] || 0) : 0;
     const chargeLabel = document.getElementById('turret-charges');
-    if (chargeLabel) chargeLabel.textContent = `(${charges})`;
+    if (chargeLabel) chargeLabel.textContent = `${charges}`;
     const bananaRadio = document.getElementById('ammo-banana');
     const turretRadio = document.getElementById('ammo-turret');
     const turretLabel = document.getElementById('ammo-turret-label');
     if (!bananaRadio || !turretRadio) return;
-    if (charges <= 0) {
-      turretRadio.disabled = true;
+    const turretAvailable = charges > 0;
+    bananaRadio.disabled = !interactive;
+    if (!turretAvailable) {
       turretRadio.checked = false;
       bananaRadio.checked = true;
       if (turretLabel) turretLabel.classList.add('ammo-disabled');
     } else {
-      turretRadio.disabled = false;
       if (turretLabel) turretLabel.classList.remove('ammo-disabled');
     }
+    turretRadio.disabled = !interactive || !turretAvailable;
     // Default to banana at the start of each turn so a prior turret choice doesn't stick
     if (!bananaRadio.checked && !turretRadio.checked) bananaRadio.checked = true;
   }
@@ -2817,6 +4052,7 @@
 
   // ─── Cinematic camera ──────────────────────────────────────────────────────
   const CAM_ZOOM = 2.4;
+  const CAM_ZOOM_CLOSE = 4.2; // extra zoom when banana is very close to a gorilla
 
   function startCinematicZoom() {
     if (settings.shakeIntensity === 'off') return;
@@ -2848,6 +4084,7 @@
   function resetCinematicZoom() {
     if (cam.safetyTimer) { clearTimeout(cam.safetyTimer); cam.safetyTimer = null; }
     cam.phase = 'idle';
+    cam.superClose = false;
     cam.zoom = cam.targetZoom = 1;
     cam.x = cam.targetX = LOGICAL_W / 2;
     cam.y = cam.targetY = LOGICAL_H / 2;
@@ -2863,9 +4100,7 @@
     // Gasp stinger — independent Audio so it plays at full speed regardless of
     // bgAudio's slowed playbackRate.
     try {
-      const gasp = new Audio('freesound_community-gasp-6253.mp3');
-      gasp.volume = 0.7;
-      gasp.play().catch(() => {});
+      playAudioClip(gaspSfx);
     } catch (e) {}
   }
 
@@ -2881,6 +4116,28 @@
     // Trigger is now server-authoritative via Net.on('cinematicStart') — the server
     // detects 180px proximity on its sim tick and broadcasts so both clients stay
     // in sync with the time-dilated physics.
+
+    // Super-close zoom: when banana is within 50px of any gorilla during cinematic,
+    // boost zoom and slow time much further.
+    if ((cam.phase === 'in' || cam.phase === 'follow') && banana && gorillas.length) {
+      const SUPER_CLOSE_DIST = 50;
+      let nearAny = false;
+      for (const g of gorillas) {
+        const dx = banana.x - g.x;
+        const dy = banana.y - g.y;
+        if (dx * dx + dy * dy < SUPER_CLOSE_DIST * SUPER_CLOSE_DIST) { nearAny = true; break; }
+      }
+      if (nearAny && !cam.superClose) {
+        cam.superClose = true;
+        cam.targetZoom = CAM_ZOOM_CLOSE;
+        cinematicTimeScale = 0.15;
+      } else if (!nearAny && cam.superClose) {
+        cam.superClose = false;
+        cam.targetZoom = CAM_ZOOM;
+        cinematicTimeScale = 0.4;
+      }
+    }
+
     // Follow banana while zooming in or holding
     if ((cam.phase === 'in' || cam.phase === 'follow') && banana) {
       cam.targetX = banana.x;
@@ -2916,9 +4173,9 @@
   }
 
   // ─── Victory dance ─────────────────────────────────────────────────────────
-  function startVictoryDance(winnerIdx) {
+  function startVictoryDance(winnerIdx, skipBeep = false) {
     let toggle = true;
-    playVictorySound();
+    if (!skipBeep) playVictorySound();
     victoryDanceTimer = setInterval(() => {
       gorillaAnim[winnerIdx] = toggle ? 3 : 4;
       toggle = !toggle;
@@ -2993,16 +4250,192 @@
     });
   }
 
+  const playerColorInput = document.getElementById('player-color');
+  if (playerColorInput) {
+    const syncColorInput = () => {
+      myColor = getSelectedPlayerColor();
+      playerColors[myPlayer > 0 ? myPlayer - 1 : 0] = myColor;
+      updatePlayerColorControl();
+      saveSettings();
+    };
+    playerColorInput.addEventListener('input', syncColorInput);
+    playerColorInput.addEventListener('change', syncColorInput);
+  }
+
   // ─── Network message handlers ─────────────────────────────────────────────
+
+  function canAutoReconnect() {
+    return !suppressReconnect &&
+      !!sessionToken &&
+      myPlayer > 0 &&
+      gameState !== 'title' &&
+      gameState !== 'setup';
+  }
+
+  function applyRoundSnapshot(msg, { hydrateTransientState = false } = {}) {
+    syncHostPlayerFromMessage(msg);
+    citySeed = msg.citySeed;
+    gorillas = msg.gorillas;
+    wind = msg.wind;
+    currentPlayer = msg.currentPlayer;
+    scores = Array.isArray(msg.scores) ? msg.scores.slice() : buildDefaultScores(2);
+    if (Array.isArray(msg.playerNames) && msg.playerNames.length) playerNames = msg.playerNames.slice();
+    if (Array.isArray(msg.playerColors) && msg.playerColors.length) {
+      playerColors = msg.playerColors.map((color, idx) => sanitizePlayerColor(color, getDefaultPlayerColor(idx)));
+      if (myPlayer > 0) myColor = playerColors[myPlayer - 1] || myColor;
+    }
+    if (myPlayer > 0 && Array.isArray(playerNames) && playerNames[myPlayer - 1]) {
+      myName = playerNames[myPlayer - 1];
+      setControlValues(PLAYER_NAME_INPUT_IDS, myName);
+    }
+    if (Array.isArray(msg.playerTeams)) playerTeams = msg.playerTeams.slice();
+    scoreMode = msg.scoreMode || 'individual';
+    teamScores = Array.isArray(msg.teamScores) ? msg.teamScores.slice() : null;
+    roundBiome = msg.biome || 'city';
+    roundWeather = msg.weather || 'clear';
+    roundTimeOfDay = msg.timeOfDay || 'day';
+    resetCinematicZoom();
+    turnStartedAt = performance.now();
+    activeTaunts = [null, null, null, null];
+    if (victoryDanceTimer) { clearInterval(victoryDanceTimer); victoryDanceTimer = null; stopVictorySound(); }
+    for (const k of Object.keys(flinchTimers)) { clearTimeout(flinchTimers[k]); delete flinchTimers[k]; }
+    for (const k of Object.keys(missedTimers)) { clearTimeout(missedTimers[k]); delete missedTimers[k]; }
+    for (const k of Object.keys(phewTimers)) { clearTimeout(phewTimers[k]); delete phewTimers[k]; }
+    for (const k of Object.keys(frustratedTimers)) { clearTimeout(frustratedTimers[k]); delete frustratedTimers[k]; }
+    for (const k of Object.keys(boredTimers)) { clearTimeout(boredTimers[k]); delete boredTimers[k]; }
+    setSunEmote('idle', 0);
+    roundNumber = msg.roundNumber || 1;
+    maxVelocity = msg.maxVelocity || 200;
+    activeBananaType = (msg.banana && msg.banana.type) || msg.bananaType || 'standard';
+    if (Array.isArray(msg.turretCharges)) {
+      for (let i = 0; i < 4; i++) turretCharges[i] = msg.turretCharges[i] != null ? msg.turretCharges[i] : turretCharges[i];
+    }
+    turrets = hydrateTransientState && Array.isArray(msg.turrets)
+      ? msg.turrets.map(t => ({
+          id: t.id,
+          ownerIdx: t.ownerIdx,
+          x: t.x,
+          y: t.y,
+          cx: t.cx,
+          cy: t.cy,
+          aimAngle: 0,
+          barrelKick: 0,
+          lastLockBeepAt: -Infinity,
+          lastBurstAt: -Infinity,
+          expireTurn: t.expireTurn,
+        }))
+      : [];
+    turretTracers = [];
+
+    if (msg.explosionRadius) settings.explosionRadius = msg.explosionRadius;
+    if (msg.gravity) settings.gravityMultiplier = msg.gravity;
+    if (msg.shakeIntensity) settings.shakeIntensity = msg.shakeIntensity;
+    if (msg.trailStyle) settings.trailStyle = msg.trailStyle;
+    if (msg.crtOverlay !== undefined) settings.crtOverlay = msg.crtOverlay;
+    if (msg.turnTimer !== undefined) settings.turnTimer = msg.turnTimer;
+    if (msg.mode) settings.gameMode = msg.mode;
+    if (msg.mapSize) settings.mapSize = msg.mapSize;
+
+    const mapCfg = MAP_SIZES[msg.mapSize] || MAP_SIZES.normal;
+    setLogicalSize(mapCfg.w, mapCfg.h);
+
+    applyLocalVisualSettingsFromControls();
+
+    buildings = generateCity(citySeed, msg.mapSize || 'normal', roundBiome);
+    carvedExplosions = hydrateTransientState && Array.isArray(msg.explosions)
+      ? msg.explosions.map(exp => ({ x: exp.x, y: exp.y, radius: exp.radius }))
+      : [];
+    collapsedBuildings = hydrateTransientState
+      ? new Set(Array.isArray(msg.collapsedBuildings) ? msg.collapsedBuildings.map(index => Number(index)) : [])
+      : new Set();
+    buildTerrainCanvas();
+
+    banana = hydrateTransientState && msg.banana
+      ? { x: msg.banana.x, y: msg.banana.y, frame: msg.banana.frame || 0 }
+      : null;
+    bananaTrail = [];
+    previousTrail = [];
+    showBanana = !!banana;
+    explosions = [];
+    napalmPatches = [];
+    deathChunks = [];
+    clusterBananas = hydrateTransientState && Array.isArray(msg.clusterBananas)
+      ? msg.clusterBananas.map(b => ({ idx: b.idx, x: b.x, y: b.y }))
+      : [];
+    gorillaAnim = gorillas.map(() => 0);
+    gorillaVisible = hydrateTransientState && Array.isArray(msg.gorillaVisible) && msg.gorillaVisible.length === gorillas.length
+      ? msg.gorillaVisible.slice()
+      : gorillas.map(() => true);
+    panicPlayers.clear();
+    slowmoActive = false;
+
+    initTwinkles();
+    generateStars();
+
+    Lighting.setAmbient(roundTimeOfDay, roundWeather, roundBiome);
+    Particles.configureForRound(roundBiome, roundWeather, roundTimeOfDay);
+    Particles.setWind(wind);
+    Background.configureForRound(roundBiome, roundWeather, roundTimeOfDay, citySeed);
+    // Keep the skyline hidden in open gaps so the playfield stays readable,
+    // but preserve backdrop detail behind building columns. The per-frame
+    // terrain alpha mask above then lets actual blast holes reveal that
+    // backdrop instead of flat sky.
+    {
+      const sorted = [...buildings].sort((a, b) => a.x - b.x);
+      // Left edge to first building
+      if (sorted.length && sorted[0].x > 0) {
+        Background.eraseColumn(0, sorted[0].x);
+      }
+      // Each building column and the gap after it
+      for (let i = 0; i < sorted.length; i++) {
+        const b = sorted[i];
+        const gapStart = b.x + b.w;
+        const gapEnd = i + 1 < sorted.length ? sorted[i + 1].x : LOGICAL_W;
+        if (gapEnd > gapStart) Background.eraseColumn(gapStart, gapEnd - gapStart);
+      }
+    }
+    startWeatherAudio(roundWeather);
+  }
+
+  function applyStateSync(msg) {
+    applyRoundSnapshot(msg, { hydrateTransientState: true });
+    stopTurnTimerDisplay();
+    stopVictoryMusic();
+
+    if (msg.state === 'matchOver' && msg.matchOver) {
+      stopBGMusic();
+      stopWeatherAudio();
+      startVictoryMusic();
+      if (Array.isArray(msg.matchOver.finalScores)) scores = msg.matchOver.finalScores.slice();
+      if (Array.isArray(msg.matchOver.playerNames) && msg.matchOver.playerNames.length) playerNames = msg.matchOver.playerNames.slice();
+      if (Array.isArray(msg.matchOver.playerColors) && msg.matchOver.playerColors.length) {
+        playerColors = msg.matchOver.playerColors.map((color, idx) => sanitizePlayerColor(color, getDefaultPlayerColor(idx)));
+      }
+      if (Array.isArray(msg.matchOver.playerTeams)) playerTeams = msg.matchOver.playerTeams.slice();
+      scoreMode = msg.matchOver.scoreMode || scoreMode;
+      teamScores = Array.isArray(msg.matchOver.teamScores) ? msg.matchOver.teamScores.slice() : teamScores;
+      syncHostPlayerFromMessage(msg.matchOver);
+      switchToMatchOver(msg.matchOver.winner, msg.matchOver.finalScores, msg.matchOver.stats);
+      return;
+    }
+
+    switchToPlaying();
+    applyPauseState(msg);
+    if (!serverPaused && msg.state === 'playing' && !msg.banana && Number(msg.turnRemainingMs) > 0) {
+      // Compensate for network latency using the server's timestamp
+      const latencyMs = (typeof msg.serverTimeMs === 'number') ? Math.max(0, Date.now() - msg.serverTimeMs) : 0;
+      const adjustedMs = Math.max(0, Number(msg.turnRemainingMs) - latencyMs);
+      startTurnTimerDisplay(Math.max(1, Math.ceil(adjustedMs / 1000)));
+    }
+  }
 
   Net.on('_connected', () => {
     // Clear any pending reconnect timer — we made it
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     reconnectAttempts = 0;
+    suppressReconnect = false;
 
-    if (gameState === 'playing') {
-      // We're reconnecting mid-game — server will send assigned + roundStart to resync.
-      // Don't call switchToWaiting() or send settings; just wait for server response.
+    if (myPlayer > 0 && gameState !== 'title' && gameState !== 'setup') {
       return;
     }
     switchToWaiting();
@@ -3028,24 +4461,25 @@
       explosionRadius: parseInt(document.getElementById('explosive-select').value) || 30,
       bananaType: document.getElementById('banana-select').value,
       friendlyFire: document.getElementById('friendlyfire-select').value !== 'false',
-      shakeIntensity: document.getElementById('shake-select').value,
-      trailStyle: document.getElementById('trail-select').value,
-      crtOverlay: document.getElementById('crt-select').value === 'true',
+      shakeIntensity: getControlValue(SHAKE_SELECT_IDS, settings.shakeIntensity),
+      trailStyle: getControlValue(TRAIL_SELECT_IDS, settings.trailStyle),
+      crtOverlay: getControlValue(CRT_SELECT_IDS, String(settings.crtOverlay)) === 'true',
     });
   }
 
   function scheduleReconnect() {
     if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (!canAutoReconnect()) return;
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return;
     reconnectAttempts++;
     reconnectTimer = setTimeout(() => {
-      if (gameState !== 'playing') return;
-      Net.connect(myName, sessionToken);
+      if (!canAutoReconnect()) return;
+      Net.connect(myName, sessionToken, myColor);
     }, 3000);
   }
 
   Net.on('_disconnected', () => {
-    if (gameState === 'playing') {
+    if (canAutoReconnect()) {
       setDisconnectCopy('Connection lost. Attempting to reconnect...');
       document.getElementById('disconnect-screen').classList.add('active');
       scheduleReconnect();
@@ -3057,114 +4491,53 @@
 
   Net.on('waiting', (msg) => {
     if (typeof msg.player === 'number') myPlayer = msg.player;
+    syncHostPlayerFromMessage(msg);
     if (gameState !== 'setup') switchToWaiting();
     if (Array.isArray(msg.playerNames) && msg.playerNames.length) {
       playerNames = msg.playerNames.slice();
     }
+    if (Array.isArray(msg.playerColors) && msg.playerColors.length) {
+      playerColors = msg.playerColors.map((color, idx) => sanitizePlayerColor(color, getDefaultPlayerColor(idx)));
+    }
     if (msg.mode) settings.gameMode = msg.mode;
     updateWaitingStatus(msg);
-    if (gameState === 'setup') updateSetupPresentation(isJoining);
+    if (gameState === 'setup') {
+      updateSetupPresentation(isJoining);
+      updatePlayerColorControl();
+    }
   });
 
   Net.on('assigned', (msg) => {
     myPlayer = msg.player;
+    syncHostPlayerFromMessage(msg);
     if (msg.token) {
       sessionToken = msg.token;
       try { sessionStorage.setItem('mm_token', sessionToken); } catch(e) {}
     }
-    try {
-      sessionStorage.setItem('mm_player', String(myPlayer));
-      sessionStorage.setItem('mm_name', myName);
-    } catch (e) {}
     if (Array.isArray(msg.playerNames) && msg.playerNames.length) playerNames = msg.playerNames.slice();
+    if (Array.isArray(msg.playerColors) && msg.playerColors.length) {
+      playerColors = msg.playerColors.map((color, idx) => sanitizePlayerColor(color, getDefaultPlayerColor(idx)));
+      myColor = playerColors[myPlayer - 1] || myColor;
+    }
+    if (Array.isArray(msg.playerNames) && msg.playerNames[myPlayer - 1]) {
+      myName = msg.playerNames[myPlayer - 1];
+      setControlValues(PLAYER_NAME_INPUT_IDS, myName);
+    }
     if (Array.isArray(msg.playerTeams)) playerTeams = msg.playerTeams.slice();
     if (msg.scoreMode) scoreMode = msg.scoreMode;
     teamScores = Array.isArray(msg.teamScores) ? msg.teamScores.slice() : null;
+    try {
+      sessionStorage.setItem('mm_player', String(myPlayer));
+    } catch (e) {}
+    persistSessionIdentity();
     document.getElementById('disconnect-screen').classList.remove('active');
     updateMatchOverActions();
     updateSetupPresentation(isJoining);
+    updatePlayerColorControl();
   });
 
   Net.on('roundStart', (msg) => {
-    citySeed = msg.citySeed;
-    gorillas = msg.gorillas;
-    wind = msg.wind;
-    currentPlayer = msg.currentPlayer;
-    scores = Array.isArray(msg.scores) ? msg.scores.slice() : buildDefaultScores(2);
-    if (Array.isArray(msg.playerNames) && msg.playerNames.length) playerNames = msg.playerNames.slice();
-    if (Array.isArray(msg.playerTeams)) playerTeams = msg.playerTeams.slice();
-    scoreMode = msg.scoreMode || 'individual';
-    teamScores = Array.isArray(msg.teamScores) ? msg.teamScores.slice() : null;
-    roundBiome = msg.biome || 'city';
-    roundWeather = msg.weather || 'clear';
-    roundTimeOfDay = msg.timeOfDay || 'day';
-    resetCinematicZoom();
-    turnStartedAt = performance.now();
-    activeTaunts = [null, null, null, null];
-    // Clear all reaction timers from previous round
-    if (victoryDanceTimer) { clearInterval(victoryDanceTimer); victoryDanceTimer = null; stopVictorySound(); }
-    for (const k of Object.keys(flinchTimers))       { clearTimeout(flinchTimers[k]); delete flinchTimers[k]; }
-    for (const k of Object.keys(missedTimers))        { clearTimeout(missedTimers[k]); delete missedTimers[k]; }
-    for (const k of Object.keys(phewTimers))        { clearTimeout(phewTimers[k]); delete phewTimers[k]; }
-    for (const k of Object.keys(frustratedTimers))  { clearTimeout(frustratedTimers[k]); delete frustratedTimers[k]; }
-    for (const k of Object.keys(boredTimers))       { clearTimeout(boredTimers[k]); delete boredTimers[k]; }
-    setSunEmote('idle', 0);
-    roundNumber = msg.roundNumber || 1;
-    maxVelocity = msg.maxVelocity || 200;
-    activeBananaType = msg.bananaType || 'standard';
-    if (Array.isArray(msg.turretCharges)) {
-      for (let i = 0; i < 4; i++) turretCharges[i] = msg.turretCharges[i] != null ? msg.turretCharges[i] : turretCharges[i];
-    }
-    turrets = [];
-    turretTracers = [];
-
-    // Sync settings
-    if (msg.explosionRadius) settings.explosionRadius = msg.explosionRadius;
-    if (msg.gravity) settings.gravityMultiplier = msg.gravity;
-    if (msg.shakeIntensity) settings.shakeIntensity = msg.shakeIntensity;
-    if (msg.trailStyle) settings.trailStyle = msg.trailStyle;
-    if (msg.crtOverlay !== undefined) settings.crtOverlay = msg.crtOverlay;
-    if (msg.turnTimer !== undefined) settings.turnTimer = msg.turnTimer;
-    if (msg.mode) settings.gameMode = msg.mode;
-    if (msg.mapSize) settings.mapSize = msg.mapSize;
-
-    // Set logical size based on map
-    const mapCfg = MAP_SIZES[msg.mapSize] || MAP_SIZES.normal;
-    setLogicalSize(mapCfg.w, mapCfg.h);
-
-    // CRT overlay
-    document.getElementById('crt-overlay').style.display = settings.crtOverlay ? 'block' : 'none';
-
-    // Generate matching city
-    buildings = generateCity(citySeed, msg.mapSize || 'normal', roundBiome);
-    carvedExplosions = [];
-    collapsedBuildings.clear();
-    buildTerrainCanvas();
-
-    // Reset state
-    banana = null;
-    bananaTrail = [];
-    previousTrail = [];
-    showBanana = false;
-    explosions = [];
-    napalmPatches = [];
-    deathChunks = [];
-    clusterBananas = [];
-    gorillaAnim = gorillas.map(() => 0);
-    gorillaVisible = gorillas.map(() => true);
-    panicPlayers.clear();
-    slowmoActive = false;
-
-    initTwinkles();
-    generateStars();
-
-    // Initialize visual effects systems for this round
-    Lighting.setAmbient(roundTimeOfDay, roundWeather, roundBiome);
-    Particles.configureForRound(roundBiome, roundWeather, roundTimeOfDay);
-    Particles.setWind(wind);
-    Background.configureForRound(roundBiome, roundWeather, roundTimeOfDay, citySeed);
-
-    startWeatherAudio(roundWeather);
+    applyRoundSnapshot(msg);
     switchToPlaying();
 
     // Windshear notification banner
@@ -3182,13 +4555,28 @@
     }
   });
 
+  Net.on('stateSync', (msg) => {
+    applyStateSync(msg);
+  });
+
+  Net.on('pauseState', (msg) => {
+    applyPauseState(msg);
+    if (!msg.paused && Number(msg.turnRemainingMs) > 0 && !banana && clusterBananas.length === 0) {
+      const latencyMs = (typeof msg.serverTimeMs === 'number') ? Math.max(0, Date.now() - msg.serverTimeMs) : 0;
+      const adjustedMs = Math.max(0, Number(msg.turnRemainingMs) - latencyMs);
+      startTurnTimerDisplay(Math.max(1, Math.ceil(adjustedMs / 1000)));
+    }
+  });
+
   Net.on('turn', (msg) => {
     currentPlayer = msg.currentPlayer;
+    shotPending = false;
     showBanana = false;
     banana = null;
     clusterBananas = [];
     previousTrail = [...bananaTrail];
     bananaTrail = [];
+    Lighting.clearLights();
     gorillaAnim = gorillaAnim.map(() => 0);
     panicPlayers.clear();
     resetCinematicZoom();
@@ -3198,6 +4586,15 @@
       clearTimeout(boredTimers[k]); delete boredTimers[k];
     }
     updateHUD();
+
+    // Flash the turn indicator when it becomes your turn
+    if (myPlayer === currentPlayer) {
+      const el = document.getElementById('hud-turn');
+      el.classList.remove('turn-notify');
+      void el.offsetWidth; // force reflow to restart animation
+      el.classList.add('turn-notify');
+      setTimeout(() => el.classList.remove('turn-notify'), 900);
+    }
 
     // Two-note ascending turn-start beep
     try {
@@ -3209,7 +4606,7 @@
           o.type = 'square'; o.frequency.value = f;
           g.gain.setValueAtTime(0.07, t + i * 0.1);
           g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.1 + 0.12);
-          o.connect(g).connect(actx.destination);
+          o.connect(g).connect(getSfxDestination(actx));
           o.start(t + i * 0.1); o.stop(t + i * 0.1 + 0.15);
         });
       }
@@ -3221,11 +4618,18 @@
   });
 
   Net.on('throwAnim', (msg) => {
-    const idx = msg.player - 1;
     if (msg.bananaType) activeBananaType = msg.bananaType;
-    playThrowSound();
     stopTurnTimerDisplay();
-    setSunEmote('watching', 0); // Start watching when banana is thrown
+
+    if (msg.isSunAttack) {
+      // Sun throws the banana — no gorilla animation, keep attacking emote
+      return;
+    }
+
+    const idx = msg.player - 1;
+    // Own player already heard the throw sound immediately in fireShot()
+    if (msg.player !== myPlayer) playThrowSound();
+    setSunEmote('watching', 0);
 
     if (getGorillaSide(idx) < 0) {
       gorillaAnim[idx] = 1;
@@ -3249,6 +4653,7 @@
     banana = { x: msg.x, y: msg.y, frame: msg.frame };
     if (msg.bananaType) activeBananaType = msg.bananaType;
     bananaTrail.push({ x: msg.x, y: msg.y });
+    if (bananaTrail.length > 200) bananaTrail.shift();
 
     // Sun emote: track banana and react based on proximity
     const dx = msg.x - SUN_X;
@@ -3317,11 +4722,38 @@
     sunWinkTimer = setTimeout(() => { sunWinking = false; }, 800);
   });
 
+  Net.on('sunAngry', (msg) => {
+    const level = msg.angerLevel;
+    if (level >= 3)      setSunEmote('furious', 0);
+    else if (level >= 2) setSunEmote('angry', 0);
+    else if (level >= 1) setSunEmote('annoyed', 0);
+    // level 0 = first hit, just show 'hit' briefly (already sent via sunHit)
+  });
+
+  Net.on('sunPunish', () => {
+    // Sun is about to retaliate — shake the screen as a warning
+    startShake();
+    Lighting.triggerExplosionFlash(false);
+  });
+
+  Net.on('sunAttacking', () => {
+    setSunEmote('attacking', 0);
+  });
+
+  Net.on('meteor', (msg) => {
+    // Flash warning at the impact site before explosion arrives
+    Lighting.addExplosionLight(msg.x, 0, msg.radius * 2);
+    Particles.burstSparks(msg.x, 0, 12);
+    startShake();
+  });
+
   Net.on('panic', (msg) => {
     const gi = msg.player - 1;
     panicPlayers.add(gi);
     reactionStart[gi] = performance.now();
-    playMonkeyChatter(false);
+    if (!(gi === myPlayer - 1 && (performance.now() - lastLocalPicnicAt) < 500)) {
+      playMonkeyChatter(false);
+    }
     const duration = Math.max(0, Number(msg.duration) || 0);
     if (duration > 0) {
       setTimeout(() => panicPlayers.delete(gi), duration);
@@ -3354,6 +4786,8 @@
       cx: msg.cx, cy: msg.cy,
       aimAngle: 0,
       barrelKick: 0,
+      lastLockBeepAt: -Infinity,
+      lastBurstAt: -Infinity,
       expireTurn: msg.expireTurn,
     });
     playTurretDeploySound();
@@ -3363,8 +4797,17 @@
   Net.on('turretFire', (msg) => {
     const t = turrets.find(x => x.id === msg.id);
     if (!t) return;
+    const now = performance.now();
     t.aimAngle = Math.atan2(msg.ty - t.cy, msg.tx - t.cx);
     t.barrelKick = -2;
+    // Fire the lock beep only on the first shot of each engagement (false → true edge).
+    // A 400ms silence resets the engaging flag so the next banana triggers a fresh beep.
+    if (!t.isEngaging) {
+      t.isEngaging = true;
+      playTurretLockSound();
+    }
+    if (t.engageResetTimer) clearTimeout(t.engageResetTimer);
+    t.engageResetTimer = setTimeout(() => { t.isEngaging = false; t.engageResetTimer = null; }, 400);
     // Muzzle point ~10px out along barrel
     const mx = t.cx + Math.cos(t.aimAngle) * 10;
     const my = (t.y + 3) + Math.sin(t.aimAngle) * 10;
@@ -3383,7 +4826,14 @@
       life: travelTime + 0.15,
       maxLife: travelTime + 0.15,
     });
-    playTurretBurst();
+    // One burst sound per engagement: the server fires a tracer every ~6 ticks
+    // while a banana is in range, which is way too many "brrap"s. Suppress
+    // repeats until the turret has been quiet long enough that the next
+    // tracer reads as a fresh shot.
+    if ((now - (t.lastBurstAt || -Infinity)) > 400) {
+      t.lastBurstAt = now;
+      playTurretBurst();
+    }
     if (msg.hit) {
       // Small airburst at the impact point
       Particles.burstSparks(msg.tx, msg.ty, 12);
@@ -3449,7 +4899,7 @@
   Net.on('gorillaDeath', (msg) => {
     const gi = msg.player - 1;
     gorillaVisible[gi] = false;
-    spawnDeathChunks(msg.x, msg.y);
+    spawnDeathChunks(msg.x, msg.y, gi);
     playGorillaDeathSound();
   });
 
@@ -3465,7 +4915,7 @@
   Net.on('erosion', (msg) => {
     for (const pt of msg.points) {
       carvedExplosions.push({ x: pt.x, y: pt.y, radius: pt.radius });
-      carveExplosion(pt.x, pt.y, pt.radius);
+      applyExplosionDamage(pt.x, pt.y, pt.radius);
     }
   });
 
@@ -3499,7 +4949,7 @@
     }
 
     carvedExplosions.push({ x: msg.x, y: msg.y, radius: msg.radius });
-    carveExplosion(msg.x, msg.y, msg.radius);
+    applyExplosionDamage(msg.x, msg.y, msg.radius);
 
     explosions.push({
       x: msg.x,
@@ -3522,6 +4972,9 @@
     clusterBananas = [];
     scores = Array.isArray(msg.scores) ? msg.scores.slice() : scores;
     if (Array.isArray(msg.playerNames) && msg.playerNames.length) playerNames = msg.playerNames.slice();
+    if (Array.isArray(msg.playerColors) && msg.playerColors.length) {
+      playerColors = msg.playerColors.map((color, idx) => sanitizePlayerColor(color, getDefaultPlayerColor(idx)));
+    }
     if (Array.isArray(msg.playerTeams)) playerTeams = msg.playerTeams.slice();
     scoreMode = msg.scoreMode || scoreMode;
     teamScores = Array.isArray(msg.teamScores) ? msg.teamScores.slice() : null;
@@ -3532,7 +4985,7 @@
     Lighting.triggerExplosionFlash(!!msg.slowmo);
 
     const winnerIdx = msg.winner - 1;
-    startVictoryDance(winnerIdx);
+    startVictoryDance(winnerIdx, !!msg.slowmo); // skip beep on match-win: music covers it
 
     // Sun reacts to the hit
     if (msg.slowmo) {
@@ -3559,6 +5012,7 @@
     showBanana = false;
     banana = null;
     clusterBananas = [];
+    endCinematicZoom(0);
     setSunEmote('happy', 1500);
     // Shooter slumps
     const shooterIdx = currentPlayer - 1;
@@ -3570,6 +5024,7 @@
   });
 
   Net.on('matchOver', (msg) => {
+    syncHostPlayerFromMessage(msg);
     stopVictorySound();
     stopTurnTimerDisplay();
     stopBGMusic();
@@ -3577,6 +5032,9 @@
     startVictoryMusic();
     if (Array.isArray(msg.finalScores)) scores = msg.finalScores.slice();
     if (Array.isArray(msg.playerNames) && msg.playerNames.length) playerNames = msg.playerNames.slice();
+    if (Array.isArray(msg.playerColors) && msg.playerColors.length) {
+      playerColors = msg.playerColors.map((color, idx) => sanitizePlayerColor(color, getDefaultPlayerColor(idx)));
+    }
     if (Array.isArray(msg.playerTeams)) playerTeams = msg.playerTeams.slice();
     scoreMode = msg.scoreMode || scoreMode;
     teamScores = Array.isArray(msg.teamScores) ? msg.teamScores.slice() : null;
@@ -3604,12 +5062,11 @@
     stopBGMusic();
     stopVictoryMusic();
     stopWeatherAudio();
-    Net.disconnect();
-    switchToTitle();
+    disconnectToTitle();
   });
 
   Net.on('opponentDisconnected', (msg) => {
-    if (gameState === 'playing') {
+    if (gameState === 'playing' || gameState === 'paused') {
       const name = typeof msg?.playerName === 'string' && msg.playerName ? msg.playerName : 'A player';
       setDisconnectCopy(`${name} disconnected. Waiting 60 seconds for reconnect...`);
       document.getElementById('disconnect-screen').classList.add('active');
@@ -3628,10 +5085,24 @@
     switchToWaiting();
   });
 
+  Net.on('opponentLeft', (msg) => {
+    const name = typeof msg?.playerName === 'string' && msg.playerName ? msg.playerName : 'A player';
+    document.getElementById('disconnect-screen').classList.remove('active');
+    appendChatMessage('System', `${name} left the match. Returning to the lobby.`, -1);
+    switchToWaiting();
+  });
+
+  Net.on('leftMatch', () => {
+    suppressReconnect = true;
+    Net.disconnect();
+    switchToTitle();
+  });
+
   Net.on('settingsSync', (msg) => {
     if (msg.settings) {
       Object.assign(settings, msg.settings);
       applyCurrentSettingsToSetupUI();
+      applyLocalVisualSettingsFromControls();
       updateRoundsLabel();
       updateSetupPresentation(isJoining);
       if (gameState === 'waiting') {
@@ -3645,21 +5116,136 @@
     }
   });
 
-  const musicSel = document.getElementById('music-select');
-  if (musicSel) {
-    musicSel.addEventListener('change', () => {
+  function bindMirroredValueControls(controlIds, { events = ['change'], onChange = null } = {}) {
+    const controls = asIdList(controlIds)
+      .map(id => document.getElementById(id))
+      .filter(Boolean);
+    if (!controls.length) return;
+
+    const sync = (source) => {
+      for (const control of controls) {
+        if (control !== source) control.value = source.value;
+      }
+      if (typeof onChange === 'function') onChange(source.value, source);
+    };
+
+    for (const control of controls) {
+      for (const eventName of events) {
+        control.addEventListener(eventName, () => sync(control));
+      }
+    }
+  }
+
+  bindMirroredValueControls(PLAYER_NAME_INPUT_IDS, {
+    events: ['input', 'change'],
+    onChange: () => {
+      myName = getPlayerNameInputValue();
+      saveSettings();
+    },
+  });
+
+  bindMirroredValueControls(MUSIC_TOGGLE_CONTROL_IDS, {
+    onChange: () => {
       saveSettings();
       applyMusicSetting();
-    });
-  }
+    },
+  });
+
+  bindMirroredValueControls(SFX_TOGGLE_CONTROL_IDS, {
+    onChange: () => {
+      saveSettings();
+      applySfxVolumeSetting();
+    },
+  });
+
+  bindMirroredValueControls(CRT_SELECT_IDS, {
+    onChange: () => {
+      syncSetupSelectionsToState();
+      applyCRTSetting();
+      saveSettings();
+    },
+  });
+
+  bindMirroredValueControls(SHAKE_SELECT_IDS, {
+    onChange: () => {
+      syncSetupSelectionsToState();
+      saveSettings();
+    },
+  });
+
+  bindMirroredValueControls(TRAIL_SELECT_IDS, {
+    onChange: () => {
+      syncSetupSelectionsToState();
+      saveSettings();
+    },
+  });
+
+  bindMirroredValueControls(EFFECTS_QUALITY_CONTROL_IDS, {
+    onChange: () => {
+      applyEffectsQualitySetting();
+      saveSettings();
+    },
+  });
 
   const musicHudEl = document.getElementById('hud-music');
   if (musicHudEl) {
     musicHudEl.addEventListener('click', () => {
-      const sel = document.getElementById('music-select');
-      if (sel) sel.value = isMusicEnabled() ? 'false' : 'true';
+      setControlValues(MUSIC_TOGGLE_CONTROL_IDS, isMusicEnabled() ? 'false' : 'true');
       applyMusicSetting();
       saveSettings();
+    });
+  }
+
+  function bindVolumeSlider(controlIds, readoutIds, applyFn) {
+    const controls = asIdList(controlIds)
+      .map(id => document.getElementById(id))
+      .filter(Boolean);
+    if (!controls.length) return;
+    const sync = () => {
+      updateAudioVolumeControls();
+      applyFn();
+      saveSettings();
+    };
+    for (const control of controls) {
+      control.addEventListener('input', () => {
+        for (const other of controls) {
+          if (other !== control) other.value = control.value;
+        }
+        setVolumeControl(controlIds, readoutIds, control.value);
+        sync();
+      });
+      control.addEventListener('change', () => {
+        for (const other of controls) {
+          if (other !== control) other.value = control.value;
+        }
+        setVolumeControl(controlIds, readoutIds, control.value);
+        sync();
+      });
+    }
+  }
+
+  bindVolumeSlider(MUSIC_VOLUME_CONTROL_IDS, MUSIC_VOLUME_READOUT_IDS, applyMusicVolumeSetting);
+  bindVolumeSlider(SFX_VOLUME_CONTROL_IDS, SFX_VOLUME_READOUT_IDS, applySfxVolumeSetting);
+
+  const pauseResumeBtn = document.getElementById('pause-resume-btn');
+  if (pauseResumeBtn) {
+    pauseResumeBtn.addEventListener('click', () => {
+      commitPauseNameChange();
+      requestPauseState(false);
+    });
+  }
+
+  const pauseExitBtn = document.getElementById('pause-exit-btn');
+  if (pauseExitBtn) {
+    pauseExitBtn.addEventListener('click', () => {
+      leaveMatchToTitle();
+    });
+  }
+
+  const pauseApplyNameBtn = document.getElementById('pause-apply-name-btn');
+  if (pauseApplyNameBtn) {
+    pauseApplyNameBtn.addEventListener('click', () => {
+      commitPauseNameChange();
     });
   }
 
@@ -3680,13 +5266,28 @@
 
   Net.on('error', (msg) => {
     const message = typeof msg.message === 'string' ? msg.message : 'Unexpected server error';
+    shotPending = false;
     console.warn('Server error:', message);
-    appendChatMessage('System', message, -1);
+    showErrorToast(message);
     if (gameState === 'waiting') {
       const statusEl = document.getElementById('waiting-status');
       if (statusEl) statusEl.textContent = message;
+    } else if (gameState === 'playing') {
+      updateInputPanel();
     }
   });
+
+  function showErrorToast(message) {
+    const toast = document.getElementById('error-toast');
+    if (!toast) { appendChatMessage('System', message, -1); return; }
+    toast.textContent = message;
+    toast.classList.add('visible');
+    if (toast._hideTimer) clearTimeout(toast._hideTimer);
+    toast._hideTimer = setTimeout(() => {
+      toast.classList.remove('visible');
+      toast._hideTimer = null;
+    }, 5000);
+  }
 
   Net.on('chat', (msg) => {
     const from = typeof msg.from === 'string' ? msg.from : '';
@@ -3702,20 +5303,34 @@
     if (gameState !== 'playing') return;
     if (myPlayer !== currentPlayer) return;
     if (showBanana) return;
+    if (shotPending) return;
     const angle = Math.max(0, Math.min(180, parseInt(document.getElementById('input-angle').value) || 0));
     const velocity = Math.max(0, Math.min(maxVelocity, parseInt(document.getElementById('input-velocity').value) || 0));
     const turretRadio = document.getElementById('ammo-turret');
     const ammoType = (turretRadio && turretRadio.checked && !turretRadio.disabled) ? 'turret' : 'banana';
+    shotPending = true;
     Net.send({ type: 'fire', angle, velocity, ammoType });
+    playThrowSound(); // play immediately — don't wait for server round-trip
     playUIConfirm();
-    document.getElementById('input-panel').style.display = 'none';
+    blurFocusedInput();
+    updateInputPanel();
   }
 
   document.getElementById('fire-btn').addEventListener('click', fireShot);
+  document.getElementById('chat-send-btn').addEventListener('click', sendChatMessage);
+
+  enableClickClearOnNumericInput(
+    document.getElementById('input-angle'),
+    () => Math.max(0, Math.min(180, parseInt(document.getElementById('input-angle').dataset.restoreValue || document.getElementById('input-angle').defaultValue, 10) || 45))
+  );
+  enableClickClearOnNumericInput(
+    document.getElementById('input-velocity'),
+    () => Math.max(0, Math.min(maxVelocity, parseInt(document.getElementById('input-velocity').dataset.restoreValue || document.getElementById('input-velocity').defaultValue, 10) || 50))
+  );
 
   // ─── Chat box click-to-type ───────────────────────────────────────────────
   document.getElementById('chat-box').addEventListener('click', (e) => {
-    // Don't re-open if already clicking inside the input itself
+    if (e.target.closest('#chat-send-btn')) return;
     if (e.target.id === 'chat-input') return;
     openChatInput();
   });
@@ -3919,7 +5534,7 @@
     o.type = type; o.frequency.setValueAtTime(freq, t0);
     g.gain.setValueAtTime(vol, t0);
     g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-    o.connect(g).connect(ctx.destination);
+    o.connect(g).connect(getSfxDestination(ctx));
     o.start(t0); o.stop(t0 + dur);
     return o;
   }
@@ -3937,7 +5552,7 @@
       lfo.frequency.value = 30; lg.gain.value = 40;
       lfo.connect(lg).connect(o.frequency);
       g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
-      o.connect(g).connect(ctx.destination);
+      o.connect(g).connect(getSfxDestination(ctx));
       lfo.start(t); o.start(t); lfo.stop(t + 0.55); o.stop(t + 0.55);
     },
     trill() {
@@ -3960,7 +5575,7 @@
       o.type = 'sawtooth'; o.frequency.setValueAtTime(500, t);
       o.frequency.exponentialRampToValueAtTime(100, t + 0.6);
       g.gain.setValueAtTime(0.22, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
-      o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + 0.65);
+      o.connect(g).connect(getSfxDestination(ctx)); o.start(t); o.stop(t + 0.65);
     },
     drum() {
       const ctx = tauntAudio(); const t = ctx.currentTime;
@@ -3969,7 +5584,7 @@
         o.type = 'sine'; o.frequency.setValueAtTime(90, t + i*0.08);
         o.frequency.exponentialRampToValueAtTime(40, t + i*0.08 + 0.08);
         g.gain.setValueAtTime(0.35, t + i*0.08); g.gain.exponentialRampToValueAtTime(0.001, t + i*0.08 + 0.1);
-        o.connect(g).connect(ctx.destination); o.start(t + i*0.08); o.stop(t + i*0.08 + 0.12);
+        o.connect(g).connect(getSfxDestination(ctx)); o.start(t + i*0.08); o.stop(t + i*0.08 + 0.12);
       }
     },
     bell() {
@@ -3982,7 +5597,7 @@
       o.type = 'sine'; o.frequency.setValueAtTime(400, t);
       o.frequency.exponentialRampToValueAtTime(1600, t + 0.4);
       g.gain.setValueAtTime(0.18, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
-      o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + 0.45);
+      o.connect(g).connect(getSfxDestination(ctx)); o.start(t); o.stop(t + 0.45);
     },
     squeak() {
       const ctx = tauntAudio(); const t = ctx.currentTime;
@@ -4002,7 +5617,7 @@
       const src = ctx.createBufferSource(); src.buffer = buf;
       const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 400;
       const g = ctx.createGain(); g.gain.value = 0.25;
-      src.connect(f).connect(g).connect(ctx.destination);
+      src.connect(f).connect(g).connect(getSfxDestination(ctx));
       src.start(t);
     },
   };
@@ -4046,6 +5661,7 @@
   }
 
   document.getElementById('taunt-btn').addEventListener('click', () => {
+    if (gameState !== 'playing') return;
     if (performance.now() < tauntCooldownUntil) return;
     const animId = Math.floor(Math.random() * TAUNT_DEFS.length) + 1;
     Net.send({ type: 'taunt', animId });
@@ -4065,9 +5681,11 @@
 
   // ─── Picnic! button: self-panic your own monkey ─────────────────────────
   let picnicCooldownUntil = 0;
+  let lastLocalPicnicAt = -Infinity;
   const picnicBtn = document.getElementById('picnic-btn');
   if (picnicBtn) {
     picnicBtn.addEventListener('click', () => {
+      if (gameState !== 'playing') return;
       const now = performance.now();
       if (now < picnicCooldownUntil) return;
       if (myPlayer < 1) return;
@@ -4075,6 +5693,7 @@
       picnicBtn.classList.add('cooling');
       setTimeout(() => picnicBtn.classList.remove('cooling'), 3000);
       Net.send({ type: 'picnic' });
+      lastLocalPicnicAt = performance.now();
       playMonkeyChatter(true);
       // Local echo in case we're offline/solo
       const gi = myPlayer - 1;
@@ -4101,10 +5720,13 @@
       case 'setup':
         if (e.key === 'Enter') {
           e.preventDefault();
-          myName = document.getElementById('player-name').value.trim() || 'Player';
+          myName = getPlayerNameInputValue();
+          setControlValues(PLAYER_NAME_INPUT_IDS, myName);
+          myColor = getSelectedPlayerColor();
           saveSettings();
           playUIConfirm();
           if (Net.isConnected()) {
+            sendPlayerProfile();
             if (isHostPlayer()) {
               sendAllSettings();
               switchToWaiting();
@@ -4112,7 +5734,8 @@
               switchToWaiting();
             }
           } else {
-            Net.connect(myName, sessionToken);
+            persistSessionIdentity();
+            Net.connect(myName, sessionToken, myColor);
           }
         }
         break;
@@ -4128,10 +5751,17 @@
           break;
         }
 
+        // Keyboard help overlay
+        if (e.key === '?' && !isInput) {
+          e.preventDefault();
+          const overlay = document.getElementById('keys-overlay');
+          if (overlay) overlay.style.display = overlay.style.display === 'none' ? 'flex' : 'none';
+          break;
+        }
+
         if ((e.key === 'm' || e.key === 'M') && !isInput) {
           e.preventDefault();
-          const sel = document.getElementById('music-select');
-          if (sel) sel.value = isMusicEnabled() ? 'false' : 'true';
+          setControlValues(MUSIC_TOGGLE_CONTROL_IDS, isMusicEnabled() ? 'false' : 'true');
           applyMusicSetting();
           saveSettings();
         }
@@ -4142,12 +5772,16 @@
         }
 
         if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
+          // Close help overlay first if open
+          const overlay = document.getElementById('keys-overlay');
+          if (overlay && overlay.style.display !== 'none') {
+            overlay.style.display = 'none';
+            e.preventDefault();
+            break;
+          }
           if (!isInput || e.key === 'Escape') {
             e.preventDefault();
-            previousState = gameState;
-            gameState = 'paused';
-            showScreen('pause-screen');
-            document.getElementById('hud').classList.add('active');
+            requestPauseState(true);
           }
         }
 
@@ -4185,14 +5819,15 @@
         break;
 
       case 'paused':
+        if (activeEl && activeEl.id === 'pause-player-name' && e.key === 'Enter') {
+          e.preventDefault();
+          commitPauseNameChange();
+          break;
+        }
         if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
           e.preventDefault();
-          gameState = previousState || 'playing';
-          document.getElementById('pause-screen').classList.remove('active');
-          if (gameState === 'playing') {
-            document.getElementById('hud').classList.add('active');
-            updateInputPanel();
-          }
+          commitPauseNameChange();
+          requestPauseState(false);
         }
         break;
 
@@ -4228,8 +5863,7 @@
         }
         if (e.key === 'Escape') {
           stopVictoryMusic();
-          Net.disconnect();
-          switchToTitle();
+          disconnectToTitle();
         }
         break;
     }
@@ -4256,8 +5890,7 @@
   if (titleReturnBtn) {
     titleReturnBtn.addEventListener('click', () => {
       stopVictoryMusic();
-      Net.disconnect();
-      switchToTitle();
+      disconnectToTitle();
     });
   }
 
@@ -4290,26 +5923,21 @@
   });
 
   // ─── Initialize ────────────────────────────────────────────────────────────
+  loadSettings();
+  syncSetupSelectionsToState();
+  updatePlayerColorControl();
+  updateAudioVolumeControls();
+
   // Init visual effects systems
   Lighting.init(LOGICAL_W, LOGICAL_H);
   Particles.init(LOGICAL_W, LOGICAL_H);
   Background.init(LOGICAL_W, LOGICAL_H);
 
-  // Apply effects quality from settings
-  const eqSel = document.getElementById('effects-quality-select');
-  if (eqSel) {
-    const q = parseInt(eqSel.value, 10);
-    Lighting.setQuality(q);
-    Particles.setQuality(q);
-    Background.setQuality(q);
-    eqSel.addEventListener('change', () => {
-      const nq = parseInt(eqSel.value, 10);
-      Lighting.setQuality(nq);
-      Particles.setQuality(nq);
-      Background.setQuality(nq);
-    });
-  }
+  applyEffectsQualitySetting();
 
+  applyCRTSetting();
+  applyMusicVolumeSetting();
+  applySfxVolumeSetting();
   applyMusicSetting();
 
   switchToTitle();
@@ -4341,48 +5969,14 @@
       o.frequency.exponentialRampToValueAtTime(300, t + 0.35);
       g.gain.setValueAtTime(0.12, t);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
-      o.connect(g).connect(ctx.destination);
+      o.connect(g).connect(getSfxDestination(ctx));
       o.start(t); o.stop(t + 0.4);
     } catch (e) {}
   }
 
-  // Monkey chatter: rapid pitched "ooh-ooh-ah-ah" via FM-like oscillator bursts
+  // Picnic/panic sting
   function playMonkeyChatter(loud) {
-    try {
-      const actx = ensureAudio();
-      const masterGain = actx.createGain();
-      masterGain.gain.setValueAtTime(loud ? 0.22 : 0.14, actx.currentTime);
-      masterGain.connect(actx.destination);
-
-      // Series of quick hoots pitched like a real chimp
-      const hoots = [520, 480, 560, 420, 580, 460, 600, 400];
-      hoots.forEach((freq, i) => {
-        const tStart = actx.currentTime + i * 0.11;
-        const dur = 0.09;
-
-        const osc = actx.createOscillator();
-        const g   = actx.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(freq, tStart);
-        // Rising chirp within each burst
-        osc.frequency.linearRampToValueAtTime(freq * 1.35, tStart + dur * 0.4);
-        osc.frequency.linearRampToValueAtTime(freq * 0.85, tStart + dur);
-
-        g.gain.setValueAtTime(0, tStart);
-        g.gain.linearRampToValueAtTime(1, tStart + 0.015);
-        g.gain.setValueAtTime(1,   tStart + dur * 0.6);
-        g.gain.linearRampToValueAtTime(0, tStart + dur);
-
-        // Low-pass to keep it from sounding too harsh
-        const filt = actx.createBiquadFilter();
-        filt.type = 'lowpass';
-        filt.frequency.setValueAtTime(2200, tStart);
-
-        osc.connect(filt).connect(g).connect(masterGain);
-        osc.start(tStart);
-        osc.stop(tStart + dur + 0.01);
-      });
-    } catch (e) {}
+    playAudioClip(panicSfx, loud ? 0.6 : 0.54);
   }
 
   // Small procedural grumble for "frustrated"
@@ -4399,7 +5993,7 @@
       lfo.connect(lg).connect(o.frequency);
       g.gain.setValueAtTime(0.18, t);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
-      o.connect(g).connect(ctx.destination);
+      o.connect(g).connect(getSfxDestination(ctx));
       lfo.start(t); o.start(t); lfo.stop(t + 0.65); o.stop(t + 0.65);
     } catch (e) {}
   }

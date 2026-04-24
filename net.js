@@ -30,7 +30,7 @@ const Net = (function () {
     }
   }
 
-  function connect(playerName, token) {
+  function connect(playerName, token, playerColor) {
     // Build WebSocket URL from current page location
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${protocol}//${location.host}/ws`;
@@ -42,6 +42,7 @@ const Net = (function () {
       // Send join message
       const joinMsg = { type: 'join', name: playerName };
       if (token) joinMsg.token = token;
+      if (typeof playerColor === 'string') joinMsg.color = playerColor;
       ws.send(JSON.stringify(joinMsg));
       dispatch({ type: '_connected' });
     };
@@ -53,7 +54,11 @@ const Net = (function () {
       } catch {
         return;
       }
-      dispatch(msg);
+      try {
+        dispatch(msg);
+      } catch (e) {
+        console.error('[Net] Unhandled error in handler for type "' + msg.type + '":', e);
+      }
     };
 
     ws.onclose = function () {
