@@ -5137,9 +5137,22 @@
 
     // Hot seat: when control passes between local players, hide inputs behind
     // a pass-the-controller overlay so the next player can't see prior angle/velocity.
+    // Lock input immediately, but defer the visual overlay so the previous
+    // shot's result (explosion, score popup) is visible first.
     if (settings.gameMode === 'hotseat' && currentPlayer !== hotseatLastShownPlayer && currentPlayer >= 1) {
-      hotseatLastShownPlayer = currentPlayer;
-      showHotseatPassOverlay(currentPlayer - 1);
+      const nextPlayer = currentPlayer;
+      hotseatLastShownPlayer = nextPlayer;
+      const isFirstTurnOfMatch = previousPlayer === 0 || previousPlayer === nextPlayer;
+      // Lock input panel right away (prevents the next player from peeking
+      // at the prior player's settings) and reflect that in the HUD.
+      hotseatPassPending = true;
+      const overlayDelay = isFirstTurnOfMatch ? 0 : 1800;
+      setTimeout(() => {
+        // Skip if state changed (match ended, returned to setup, etc.)
+        if (gameState !== 'playing') return;
+        if (currentPlayer !== nextPlayer) return;
+        showHotseatPassOverlay(nextPlayer - 1);
+      }, overlayDelay);
     }
 
     // Flash the turn indicator when it becomes your turn

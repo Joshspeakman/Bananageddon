@@ -3067,6 +3067,9 @@ function handleRematch(ws) {
     return;
   }
   match.rosterSize = isSoloTurnMode() ? 1 : Math.min(getSupportedPlayerCount(), connectedCount);
+  if (getModeConfig().key === 'hotseat' || match.settings.gameMode === 'hotseat') {
+    match.rosterSize = getControlledPlayerCount();
+  }
   match.scores = [0, 0, 0, 0];
   match.stats = match.stats.map(() => ({ shots: 0, hits: 0, nearMisses: 0, longestShot: 0, fastestBanana: 0 }));
   match.roundNumber = 0;
