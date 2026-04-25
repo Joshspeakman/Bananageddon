@@ -499,6 +499,10 @@
   // angle/velocity entries).
   let hotseatPassPending = false;
   let hotseatLastShownPlayer = 0;
+  // Hot seat: remember each local player's last angle/velocity/ammo so they
+  // pick up where they left off when their turn comes back. Indexed by
+  // (currentPlayer - 1). null = no shot fired yet → input keeps its default.
+  let hotseatPlayerInputs = [null, null, null, null];
 
   // Settings (synced from server)
   let settings = {
@@ -4062,6 +4066,7 @@
     // Reset hot-seat overlay state so it doesn't bleed across sessions
     hotseatLastShownPlayer = 0;
     hotseatPassPending = false;
+    hotseatPlayerInputs = [null, null, null, null];
     const _hotseatOverlay = document.getElementById('hotseat-pass-overlay');
     if (_hotseatOverlay) _hotseatOverlay.style.display = 'none';
     stopDanceAnimation();
@@ -4247,6 +4252,7 @@
     const overlay = document.getElementById('hotseat-pass-overlay');
     if (overlay) overlay.style.display = 'none';
     hotseatPassPending = false;
+    hotseatPlayerInputs = [null, null, null, null];
     document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
     document.getElementById('hud').classList.add('active');
     updateHUD();
@@ -4728,6 +4734,21 @@
     const overlay = document.getElementById('hotseat-pass-overlay');
     hotseatPassPending = false;
     if (overlay) overlay.style.display = 'none';
+    // Restore this player's last angle/velocity/ammo (or keep defaults if none).
+    if (settings.gameMode === 'hotseat') {
+      const slot = currentPlayer - 1;
+      const saved = (slot >= 0 && slot < hotseatPlayerInputs.length) ? hotseatPlayerInputs[slot] : null;
+      if (saved) {
+        const angleEl = document.getElementById('input-angle');
+        const velEl = document.getElementById('input-velocity');
+        if (angleEl) angleEl.value = String(saved.angle);
+        if (velEl) velEl.value = String(saved.velocity);
+        if (saved.ammoType === 'turret') {
+          const turretRadio = document.getElementById('ammo-turret');
+          if (turretRadio && !turretRadio.disabled) turretRadio.checked = true;
+        }
+      }
+    }
     updateInputPanel();
     updateHUD();
   }
@@ -5924,6 +5945,13 @@
     const velocity = Math.max(0, Math.min(maxVelocity, parseInt(document.getElementById('input-velocity').value) || 0));
     const turretRadio = document.getElementById('ammo-turret');
     const ammoType = (turretRadio && turretRadio.checked && !turretRadio.disabled) ? 'turret' : 'banana';
+    // Hot seat: remember this player's settings so they reappear on their next turn.
+    if (isHotseat) {
+      const slot = currentPlayer - 1;
+      if (slot >= 0 && slot < hotseatPlayerInputs.length) {
+        hotseatPlayerInputs[slot] = { angle, velocity, ammoType };
+      }
+    }
     shotPending = true;
     Net.send({ type: 'fire', angle, velocity, ammoType });
     playThrowSound(); // play immediately — don't wait for server round-trip
