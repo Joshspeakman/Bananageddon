@@ -47,8 +47,9 @@ The server prints `localhost` and LAN URLs. Open one of those URLs in a browser 
 - The host owns all synced match settings.
 - The lobby auto-starts as soon as the selected mode has enough connected players.
 - If more players are connected than the selected mode supports, the server blocks the start and sends an error to the whole lobby.
-- During an active round, only reconnecting players may rejoin. Brand-new joins are rejected until the match returns to `waiting` or `matchOver`.
-- Active-match reconnects are token-based and remain valid for 60 seconds after disconnect.
+- During an active round, only reconnecting players may rejoin as players. Brand-new users can join as spectators.
+- Player and spectator reconnects are token-based and remain valid for 15 seconds after disconnect.
+- Up to 8 spectators can watch and chat. Spectators can queue a first-come challenge for any player seat; queued challengers claim the target seat after the reconnect window or when the player gives up the seat after match over.
 - Host controls follow the current host slot, not always player 1. If the host times out in `waiting`, host rights move to the next connected player.
 
 ## Mode Matrix
@@ -100,7 +101,8 @@ Current automated coverage includes:
 - solo `targetpractice` auto-start
 - 4-player `team` start payloads
 - over-capacity lobby blocking
-- rejecting brand-new joins during active play
+- rejecting brand-new player joins during active play
+- spectator join/chat, spectator cap, and challenge-seat promotion
 - host-only `clearMatch` enforcement
 - preserving reconnect reservations in `waiting`
 - promoting a new host after timeout

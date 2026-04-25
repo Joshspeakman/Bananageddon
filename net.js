@@ -30,7 +30,7 @@ const Net = (function () {
     }
   }
 
-  function connect(playerName, token, playerColor) {
+  function connect(playerName, token, playerColor, role = 'player') {
     // Build WebSocket URL from current page location
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${protocol}//${location.host}/ws`;
@@ -40,7 +40,7 @@ const Net = (function () {
     ws.onopen = function () {
       connected = true;
       // Send join message
-      const joinMsg = { type: 'join', name: playerName };
+      const joinMsg = { type: 'join', name: playerName, role };
       if (token) joinMsg.token = token;
       if (typeof playerColor === 'string') joinMsg.color = playerColor;
       ws.send(JSON.stringify(joinMsg));

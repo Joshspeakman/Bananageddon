@@ -20,7 +20,8 @@ const {
 } = Shared;
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;
-const DISCONNECT_TIMEOUT_MS = Math.max(100, Number(process.env.DISCONNECT_TIMEOUT_MS) || 60000);
+const DISCONNECT_TIMEOUT_MS = Math.max(100, Number(process.env.DISCONNECT_TIMEOUT_MS) || 15000);
+const MAX_SPECTATORS = 8;
 
 // ─── Seeded PRNG (mulberry32) ────────────────────────────────────────────────
 function mulberry32(seed) {
@@ -213,17 +214,24 @@ const httpServer = http.createServer((req, res) => {
   // /status endpoint — returns match availability info
   if (req.url === '/status') {
     const connectedPlayers = match.players.filter(p => p && p.connected);
-    const reservedPlayers = match.players.filter((p, i) => p && !p.connected && match.disconnectTimers[i]);
+    const reservedPlayers = getReservedPlayerCount();
+    const spectatorCount = getSpectatorCount();
     const playerNames = match.players
       .filter((p, i) => p && (p.connected || match.disconnectTimers[i]))
       .map(p => p.name);
     const body = JSON.stringify({
-      active: connectedPlayers.length > 0 || reservedPlayers.length > 0,
+      active: connectedPlayers.length > 0 || reservedPlayers > 0 || spectatorCount > 0,
       state: match.state,
       playerCount: connectedPlayers.length,
       connectedPlayerCount: connectedPlayers.length,
-      reservedPlayerCount: reservedPlayers.length,
+      reservedPlayerCount: reservedPlayers,
       playerNames,
+      spectatorCount,
+      spectatorNames: getSpectatorNames(),
+      maxSpectators: MAX_SPECTATORS,
+      joinableAsPlayer: canJoinAsPlayer(),
+      joinableAsSpectator: canJoinAsSpectator(),
+      full: !canJoinAsPlayer(),
       gameMode: match.settings.gameMode,
       mapSize: match.settings.mapSize,
       hostPlayer: getHostPlayerNumber(),
@@ -286,6 +294,9 @@ let match = null;
 function createMatch() {
   return {
     players: [null, null, null, null],
+    spectators: new Map(),
+    spectatorDisconnectTimers: new Map(),
+    challengeQueue: [],
     scores: [0, 0, 0, 0],
     settings: { ...CLASSIC_SETTINGS },
     rosterSize: 0,
@@ -377,6 +388,46 @@ function getConnectedPlayerCount() {
   return match.players.filter(p => p?.connected).length;
 }
 
+function getReservedPlayerCount() {
+  return match.players.filter((p, i) => p && !p.connected && match.disconnectTimers[i]).length;
+}
+
+function getSpectatorEntries({ includeReserved = true } = {}) {
+  return Array.from(match.spectators.values()).filter(spec =>
+    spec && (spec.connected || (includeReserved && match.spectatorDisconnectTimers.has(spec.id)))
+  );
+}
+
+function getConnectedSpectatorEntries() {
+  return getSpectatorEntries({ includeReserved: false });
+}
+
+function getSpectatorCount({ includeReserved = true } = {}) {
+  return getSpectatorEntries({ includeReserved }).length;
+}
+
+function getSpectatorNames({ includeReserved = true } = {}) {
+  return getSpectatorEntries({ includeReserved }).map(spec => spec.name);
+}
+
+function getClaimedPlayerSlotCount(mode = match.settings.gameMode) {
+  const maxPlayers = getSupportedPlayerCount(mode);
+  let claimed = 0;
+  for (let i = 0; i < maxPlayers; i++) {
+    if (match.players[i] || match.disconnectTimers[i]) claimed++;
+  }
+  return claimed;
+}
+
+function canJoinAsPlayer() {
+  if (match.state === 'playing' || match.state === 'roundEnd') return false;
+  return getClaimedPlayerSlotCount() < getSupportedPlayerCount();
+}
+
+function canJoinAsSpectator() {
+  return getSpectatorCount() < MAX_SPECTATORS;
+}
+
 function getConnectedPlayerNames() {
   return match.players
     .filter(p => p?.connected)
@@ -389,7 +440,11 @@ function getLobbyPlayerNames() {
 }
 
 function getPlayerColorsView(count = getActivePlayerCount()) {
+  const isHotseat = match.settings.gameMode === 'hotseat';
   return Array.from({ length: count }, (_, i) => {
+    if (isHotseat && i === 1) {
+      return sanitizePlayerColor(match.settings.player2Color, getDefaultPlayerColor(1));
+    }
     const color = match.players[i]?.color;
     return sanitizePlayerColor(color, getDefaultPlayerColor(i));
   });
@@ -417,6 +472,7 @@ function getActivePlayerCount() {
   if (match.rosterSize > 0 && match.state !== 'waiting') {
     return Math.min(match.rosterSize, getControlledPlayerCount(mode));
   }
+  if (mode === 'hotseat') return getControlledPlayerCount(mode);
   if (isSoloTurnMode(mode)) return 1;
   if (mode === 'team' || mode === 'koth') {
     const claimedPlayers = match.players.filter(p => p).length;
@@ -431,7 +487,14 @@ function getRoundGorillaCount(mode = match.settings.gameMode) {
 
 function getPlayerNamesView() {
   const count = getActivePlayerCount();
-  return Array.from({ length: count }, (_, i) => match.players[i]?.name || `Player ${i + 1}`);
+  const isHotseat = match.settings.gameMode === 'hotseat';
+  return Array.from({ length: count }, (_, i) => {
+    if (isHotseat && i === 1) {
+      const name = match.settings.player2Name;
+      return (typeof name === 'string' && name.trim()) ? name.trim().substring(0, 20) : 'Player 2';
+    }
+    return match.players[i]?.name || `Player ${i + 1}`;
+  });
 }
 
 function getPlayerTeamsView(mode = match.settings.gameMode) {
@@ -518,6 +581,9 @@ function buildRoundStartPayload() {
     turretCharges: match.turretCharges.slice(0, getActivePlayerCount()),
     gauntletLevel: match.gauntletLevel,
     hostPlayer: getHostPlayerNumber(),
+    spectatorCount: getSpectatorCount(),
+    spectatorNames: getSpectatorNames(),
+    maxSpectators: MAX_SPECTATORS,
   };
 }
 
@@ -526,6 +592,7 @@ function buildAssignedPayload(playerIdx, { waiting = match.state === 'waiting' }
   const playerColors = waiting ? getLobbyPlayerColors() : getPlayerColorsView();
   return {
     type: 'assigned',
+    role: 'player',
     player: playerIdx + 1,
     playerNames,
     playerColors,
@@ -535,7 +602,60 @@ function buildAssignedPayload(playerIdx, { waiting = match.state === 'waiting' }
     activePlayerCount: waiting ? playerNames.length : getActivePlayerCount(),
     token: match.players[playerIdx]?.token,
     hostPlayer: getHostPlayerNumber(),
+    spectatorCount: getSpectatorCount(),
+    spectatorNames: getSpectatorNames(),
+    maxSpectators: MAX_SPECTATORS,
   };
+}
+
+function buildSpectatorAssignedPayload(spec) {
+  const waiting = match.state === 'waiting';
+  const playerNames = waiting ? getLobbyPlayerNames() : getPlayerNamesView();
+  const playerColors = waiting ? getLobbyPlayerColors() : getPlayerColorsView();
+  return {
+    type: 'spectatorAssigned',
+    role: 'spectator',
+    spectatorId: spec.id,
+    name: spec.name,
+    token: spec.token,
+    playerNames,
+    playerColors,
+    playerTeams: waiting ? [] : getPlayerTeamsView(),
+    scoreMode: getScoreMode(),
+    teamScores: waiting || getScoreMode() !== 'team' ? null : getTeamScores(),
+    activePlayerCount: waiting ? playerNames.length : getActivePlayerCount(),
+    hostPlayer: getHostPlayerNumber(),
+    spectatorCount: getSpectatorCount(),
+    spectatorNames: getSpectatorNames(),
+    maxSpectators: MAX_SPECTATORS,
+    challengeQueue: getChallengeQueueView(),
+  };
+}
+
+function buildSpectatorStatusPayload() {
+  return {
+    type: 'spectators',
+    spectatorCount: getSpectatorCount(),
+    spectatorNames: getSpectatorNames(),
+    maxSpectators: MAX_SPECTATORS,
+  };
+}
+
+function getChallengeQueueView() {
+  return match.challengeQueue.map((entry, idx) => ({
+    position: idx + 1,
+    targetPlayer: entry.targetPlayer,
+    targetName: getPlayerNamesView()[entry.targetPlayer - 1] || `Player ${entry.targetPlayer}`,
+    spectatorName: entry.spectatorName,
+    spectatorId: entry.spectatorId,
+  }));
+}
+
+function broadcastChallengeQueue() {
+  broadcast({
+    type: 'challengeQueue',
+    challengeQueue: getChallengeQueueView(),
+  });
 }
 
 function getTurnRemainingMs() {
@@ -584,22 +704,31 @@ function handleSunHit(playerIdx) {
   match.playerSunHits[playerIdx] = (match.playerSunHits[playerIdx] || 0) + 1;
   const totalHits = match.sunHitsThisRound;
 
-  let angerLevel = 0;
-  if (totalHits >= 6)      angerLevel = 3; // furious
-  else if (totalHits >= 4) angerLevel = 2; // angry
-  else if (totalHits >= 2) angerLevel = 1; // annoyed
+  if (!match.goldenGorilla) {
+    const angerT = match.sunAngerThreshold;
+    const punishT = match.sunPunishThreshold;
+    let angerLevel = 0;
+    if (totalHits >= punishT)       angerLevel = 3;
+    else if (totalHits >= angerT + 1) angerLevel = 2;
+    else if (totalHits >= angerT)     angerLevel = 1;
+    broadcast({ type: 'sunAngry', angerLevel, totalHits });
 
-  broadcast({ type: 'sunAngry', angerLevel, totalHits });
+    // Lesser punishments — triggers once at sunPunishThreshold
+    if (totalHits >= punishT && !match.sunPunishmentDone) {
+      match.sunPunishmentDone = true;
+      const roll = Math.random();
+      let punishType;
+      if (roll < 0.03)       punishType = 'bounceback';
+      else if (roll < 0.35)  punishType = 'windblast';
+      else if (roll < 0.67)  punishType = 'meteor';
+      else                   punishType = 'flare';
+      match.sunRetaliating = { type: punishType, targetPlayerIdx: playerIdx };
+      broadcast({ type: 'sunPunish' });
+    }
 
-  if (totalHits >= 3 && !match.sunRetaliating) {
-    const roll = Math.random();
-    let punishType;
-    if (roll < 0.35)      punishType = 'bounceback';
-    else if (roll < 0.55) punishType = 'windblast';
-    else if (roll < 0.75) punishType = 'meteor';
-    else                  punishType = 'flare';
-    match.sunRetaliating = { type: punishType, targetPlayerIdx: playerIdx };
-    broadcast({ type: 'sunPunish', punishType });
+    if (totalHits >= 25) {
+      spawnGoldenGorilla(playerIdx);
+    }
   }
 }
 
@@ -705,6 +834,10 @@ function buildStateSyncPayload() {
       expireTurn: t.expireTurn,
     })),
     turnRemainingMs: getTurnRemainingMs(),
+    spectatorCount: getSpectatorCount(),
+    spectatorNames: getSpectatorNames(),
+    maxSpectators: MAX_SPECTATORS,
+    challengeQueue: getChallengeQueueView(),
   };
 
   if (match.state === 'matchOver' && match.matchOverSummary) {
@@ -727,12 +860,23 @@ function broadcast(msg) {
       p.ws.send(data);
     }
   }
+  for (const spec of match.spectators.values()) {
+    if (spec && spec.connected && spec.ws.readyState === 1) {
+      spec.ws.send(data);
+    }
+  }
 }
 
 function sendTo(playerIdx, msg) {
   const p = match.players[playerIdx];
   if (p && p.connected && p.ws.readyState === 1) {
     p.ws.send(JSON.stringify(msg));
+  }
+}
+
+function sendToSpectator(spec, msg) {
+  if (spec && spec.connected && spec.ws.readyState === 1) {
+    spec.ws.send(JSON.stringify(msg));
   }
 }
 
@@ -746,6 +890,10 @@ function sendWaitingState() {
     playerNames: getLobbyPlayerNames(),
     playerColors: getLobbyPlayerColors(),
     hostPlayer: getHostPlayerNumber(),
+    spectatorCount: getSpectatorCount(),
+    spectatorNames: getSpectatorNames(),
+    maxSpectators: MAX_SPECTATORS,
+    challengeQueue: getChallengeQueueView(),
   };
 
   for (let i = 0; i < match.players.length; i++) {
@@ -753,6 +901,156 @@ function sendWaitingState() {
       sendTo(i, { ...payload, player: i + 1 });
     }
   }
+  for (const spec of match.spectators.values()) {
+    if (spec?.connected) {
+      sendToSpectator(spec, { ...payload, role: 'spectator' });
+    }
+  }
+}
+
+function findSpectatorByWs(ws) {
+  for (const spec of match.spectators.values()) {
+    if (spec?.ws === ws) return spec;
+  }
+  return null;
+}
+
+function findSpectatorByToken(token) {
+  if (!token) return null;
+  for (const spec of match.spectators.values()) {
+    if (spec?.token === token) return spec;
+  }
+  return null;
+}
+
+function findConnectionByWs(ws) {
+  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
+  if (playerIdx !== -1) {
+    return { role: 'player', playerIdx, client: match.players[playerIdx] };
+  }
+
+  const spectator = findSpectatorByWs(ws);
+  if (spectator) {
+    return { role: 'spectator', spectatorId: spectator.id, client: spectator };
+  }
+
+  return null;
+}
+
+function broadcastSpectatorStatus() {
+  broadcast(buildSpectatorStatusPayload());
+}
+
+function removeSpectatorChallenges(specId) {
+  const before = match.challengeQueue.length;
+  match.challengeQueue = match.challengeQueue.filter(entry => entry.spectatorId !== specId);
+  if (match.challengeQueue.length !== before) broadcastChallengeQueue();
+}
+
+function getNextChallengeForSlot(slotIdx) {
+  const targetPlayer = slotIdx + 1;
+  return match.challengeQueue.find(entry => entry.targetPlayer === targetPlayer) || null;
+}
+
+function popNextConnectedChallengeForSlot(slotIdx) {
+  const targetPlayer = slotIdx + 1;
+  for (let i = 0; i < match.challengeQueue.length; i++) {
+    const entry = match.challengeQueue[i];
+    if (entry.targetPlayer !== targetPlayer) continue;
+
+    const spec = match.spectators.get(entry.spectatorId);
+    if (!spec) {
+      match.challengeQueue.splice(i, 1);
+      i--;
+      continue;
+    }
+
+    if (!spec.connected || !spec.ws || spec.ws.readyState !== 1) {
+      continue;
+    }
+
+    match.challengeQueue.splice(i, 1);
+    return { entry, spec };
+  }
+
+  return null;
+}
+
+function makeSpectator(name, ws, token = crypto.randomUUID()) {
+  const id = crypto.randomUUID();
+  const spec = {
+    id,
+    ws,
+    name,
+    token,
+    connected: true,
+    chatTimes: [],
+  };
+  match.spectators.set(id, spec);
+  return spec;
+}
+
+function convertPlayerToSpectator(playerIdx, { allowAtCapacity = false } = {}) {
+  const player = match.players[playerIdx];
+  if (!player || !player.connected || !player.ws || player.ws.readyState !== 1) return null;
+  if (allowAtCapacity ? getSpectatorCount() > MAX_SPECTATORS : getSpectatorCount() >= MAX_SPECTATORS) return null;
+
+  const spec = makeSpectator(player.name || `Player ${playerIdx + 1}`, player.ws);
+  match.players[playerIdx] = null;
+  if (match.disconnectTimers[playerIdx]) {
+    clearTimeout(match.disconnectTimers[playerIdx]);
+    match.disconnectTimers[playerIdx] = null;
+  }
+  sendToSpectator(spec, buildSpectatorAssignedPayload(spec));
+  return spec;
+}
+
+function promoteSpectatorToPlayer(spec, slotIdx) {
+  if (!spec || slotIdx < 0 || slotIdx >= match.players.length) return false;
+
+  if (match.spectatorDisconnectTimers.has(spec.id)) {
+    clearTimeout(match.spectatorDisconnectTimers.get(spec.id));
+    match.spectatorDisconnectTimers.delete(spec.id);
+  }
+  match.spectators.delete(spec.id);
+  removeSpectatorChallenges(spec.id);
+
+  match.players[slotIdx] = {
+    ws: spec.ws,
+    name: spec.name,
+    connected: !!spec.connected,
+    token: spec.token,
+    color: getDefaultPlayerColor(slotIdx),
+  };
+
+  if (match.players[slotIdx].connected) {
+    sendTo(slotIdx, buildAssignedPayload(slotIdx, { waiting: match.state === 'waiting' }));
+  }
+
+  return true;
+}
+
+function claimQueuedChallengeForSlot(slotIdx, { convertOldPlayer = false } = {}) {
+  const oldPlayer = match.players[slotIdx];
+  const claim = popNextConnectedChallengeForSlot(slotIdx);
+  if (!claim) return false;
+
+  if (convertOldPlayer && oldPlayer?.connected) {
+    convertPlayerToSpectator(slotIdx, { allowAtCapacity: true });
+  } else {
+    match.players[slotIdx] = null;
+  }
+
+  promoteSpectatorToPlayer(claim.spec, slotIdx);
+  broadcast({
+    type: 'challengeResolved',
+    player: slotIdx + 1,
+    playerName: oldPlayer?.name || `Player ${slotIdx + 1}`,
+    challengerName: claim.spec.name,
+  });
+  broadcastSpectatorStatus();
+  broadcastChallengeQueue();
+  return true;
 }
 
 function getThrowSide(playerIdx) {
@@ -855,6 +1153,12 @@ function newRound() {
   match.playerSunHits = [0, 0, 0, 0];
   match.sunRetaliating = null;
   match.sunAttackInProgress = false;
+  match.sunAngerThreshold = 3 + Math.floor(Math.random() * 3);   // 3–5
+  match.sunPunishThreshold = 8 + Math.floor(Math.random() * 3);  // 8–10
+  match.sunPunishmentDone = false;
+  match.goldenGorilla = null;
+  match.goldenGorillaQueue = [];
+  match.goldenGorillaAttackInProgress = false;
   // Alternate starting player across rounds so P1 doesn't always open
   {
     if (isSoloTurnMode(mode)) {
@@ -988,6 +1292,14 @@ function switchTurn() {
   }
   match.sunAttackInProgress = false;
 
+  // Golden Gorilla: attacks both players every turn switch while active.
+  if (match.goldenGorilla?.active && !match.goldenGorillaAttackInProgress) {
+    match.goldenGorillaAttackInProgress = true;
+    launchGoldenGorillaAttacks();
+    return;
+  }
+  match.goldenGorillaAttackInProgress = false;
+
   const mode = match.settings.gameMode;
 
   if (mode === 'artillery') {
@@ -1027,7 +1339,8 @@ function launchSunAttack(punishment) {
   const mapCfg = getMapConfig();
   const W = mapCfg.w;
   const H = mapCfg.h;
-  const SUN_X = W / 2;
+  const SUN_X = match.roundTimeOfDay === 'dawn' ? W * 0.85 :
+                match.roundTimeOfDay === 'dusk' ? W * 0.15 : W / 2;
   const SUN_Y = 68;
 
   broadcast({ type: 'sunAttacking', punishType: punishment.type });
@@ -1146,6 +1459,263 @@ function launchSunAttack(punishment) {
   }
 }
 
+// ─── Golden Gorilla ──────────────────────────────────────────────────────────
+function getGoldenGorillaPosition() {
+  const mapCfg = getMapConfig();
+  const W = mapCfg.w;
+  let best = null;
+  let bestDist = Infinity;
+  for (const b of match.buildings) {
+    const dist = Math.abs((b.x + b.w / 2) - W / 2);
+    if (dist < bestDist) { bestDist = dist; best = b; }
+  }
+  if (best) {
+    return { x: Math.floor(best.x + best.w / 2 - GORILLA_W / 2), y: best.y - GORILLA_H };
+  }
+  return { x: Math.floor(W / 2 - GORILLA_W / 2), y: Math.floor(mapCfg.h * 0.45) };
+}
+
+function spawnGoldenGorilla(triggerPlayerIdx) {
+  const pos = getGoldenGorillaPosition();
+  match.goldenGorilla = { active: true, x: pos.x, y: pos.y, triggerPlayerIdx };
+  match.sunRetaliating = null;
+  broadcast({ type: 'goldenGorillaSpawn', x: pos.x, y: pos.y });
+}
+
+function despawnGoldenGorilla() {
+  if (!match.goldenGorilla) return;
+  match.goldenGorilla = null;
+  match.goldenGorillaQueue = [];
+  match.goldenGorillaAttackInProgress = false;
+  broadcast({ type: 'goldenGorillaDespawn' });
+}
+
+function launchGoldenGorillaAttacks() {
+  const activeCount = getActivePlayerCount();
+  const targets = [];
+  for (let i = 0; i < activeCount; i++) targets.push(i);
+  // Shuffle attack order
+  for (let i = targets.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [targets[i], targets[j]] = [targets[j], targets[i]];
+  }
+  match.goldenGorillaQueue = targets;
+  broadcast({ type: 'goldenGorillaAttacking' });
+  scheduleGameplayAction(() => {
+    if (match.state !== 'playing') return;
+    const next = match.goldenGorillaQueue.shift();
+    if (next !== undefined) fireGoldenGorillaBanana(next);
+    else onGoldenGorillaAttackComplete();
+  }, 600);
+}
+
+function fireGoldenGorillaBanana(targetIdx) {
+  if (!match.goldenGorilla?.active || match.state !== 'playing') {
+    onGoldenGorillaAttackComplete();
+    return;
+  }
+  const gg = match.goldenGorilla;
+  const gorilla = match.gorillas[targetIdx];
+  if (!gorilla) { onGoldenGorillaAttackComplete(); return; }
+
+  const ggCx = gg.x + GORILLA_W / 2;
+  const ggCy = gg.y + GORILLA_H / 2;
+  const gcx = gorilla.x + GORILLA_W / 2;
+  const gcy = gorilla.y + GORILLA_H / 2;
+
+  // Bimodal inaccuracy: usually decent, occasionally completely wild
+  const wildShot = Math.random() < 0.4;
+  const inaccuracy = wildShot
+    ? 120 + Math.random() * 80   // wild: ±160–200px
+    : 10 + Math.random() * 30;   // controlled: ±10–40px
+  const aimX = gcx + (Math.random() - 0.5) * 2 * inaccuracy;
+  const aimY = gcy + (Math.random() - 0.5) * inaccuracy * 0.4;
+
+  // Insane weapon pool
+  const roll = Math.random();
+  let bType, isTossback = false, bouncesOverride = null, blastRadiusOverride = null, isBarrage = false, isFlareBurst = false;
+  if      (roll < 0.05) bType = 'standard';
+  else if (roll < 0.13) bType = 'heavy';
+  else if (roll < 0.23) bType = 'cluster';
+  else if (roll < 0.31) bType = 'napalm';
+  else if (roll < 0.38) bType = 'skipper';
+  else if (roll < 0.43) { bType = 'standard'; isTossback = true; }         // high-arc lob
+  else if (roll < 0.57) { bType = 'heavy';    isBarrage = true; }          // 3-shot rapid barrage
+  else if (roll < 0.75) { isFlareBurst = true; bType = 'sunflare'; }       // 5 targeted flares
+  else if (roll < 0.89) { bType = 'napalm';  blastRadiusOverride = 85; }  // mega napalm
+  else if (roll < 0.96) { bType = 'skipper'; bouncesOverride = 6; }       // triple skipper
+  else                    bType = 'dud';                                    // troll
+
+  // Flare burst is handled by a separate multi-banana function
+  if (isFlareBurst) {
+    fireGoldenGorillaFlares(targetIdx);
+    return;
+  }
+
+  // Queue 2 extra same-target shots for barrage (they fire after this one resolves)
+  if (isBarrage) {
+    match.goldenGorillaQueue.unshift(targetIdx, targetIdx);
+  }
+
+  const dx = aimX - ggCx;
+  const dy = aimY - ggCy;
+  const biomeCfg = BIOME_CONFIGS[match.roundBiome] || BIOME_CONFIGS.city;
+  const gravity = BASE_GRAVITY * match.settings.gravityMultiplier * biomeCfg.gravMult;
+  const T = isTossback ? 4.0 : 2.2;
+  const vx = dx / T;
+  const vy = (dy - 0.5 * gravity * T * T) / T;
+
+  const cfg = BANANA_CONFIGS[bType] || BANANA_CONFIGS.standard;
+  match.banana = {
+    x: ggCx, y: ggCy,
+    vx, vy,
+    tick: 0, frame: 0,
+    distanceTraveled: 0,
+    sunHitSent: true,
+    type: bType,
+    bouncesLeft: bouncesOverride ?? cfg.bounces ?? 0,
+    hasClusterSplit: false,
+    launchVelocity: Math.sqrt(vx * vx + vy * vy),
+    isSunAttack: true,
+    goldenGorillaAttack: true,
+    sunAttackTargetIdx: targetIdx,
+    blastRadiusOverride,
+  };
+
+  const throwSide = gcx > ggCx ? 1 : -1;
+  broadcast({
+    type: 'throwAnim',
+    player: 0,
+    angle: 0, velocity: 0,
+    bananaType: bType,
+    isSunAttack: true,
+    isGoldenGorilla: true,
+    goldenGorillaThrowSide: throwSide,
+    isTossback,
+  });
+  scheduleGameplayAction(() => { if (match.banana) simulateBanana(); }, 700);
+}
+
+function fireGoldenGorillaFlares(targetIdx) {
+  if (!match.goldenGorilla?.active || match.state !== 'playing') {
+    onGoldenGorillaAttackComplete();
+    return;
+  }
+  const gg = match.goldenGorilla;
+  const gorilla = match.gorillas[targetIdx];
+  if (!gorilla) { onGoldenGorillaAttackComplete(); return; }
+
+  const ggCx = gg.x + GORILLA_W / 2;
+  const ggCy = gg.y + GORILLA_H / 2;
+  const gcx = gorilla.x + GORILLA_W / 2;
+  const mapCfg = getMapConfig();
+  const biomeCfg = BIOME_CONFIGS[match.roundBiome] || BIOME_CONFIGS.city;
+  const gravity = BASE_GRAVITY * match.settings.gravityMultiplier * biomeCfg.gravMult;
+  const flareCount = 5;
+  const flareRadius = 22;
+  let pending = flareCount;
+
+  const throwSide = gcx > ggCx ? 1 : -1;
+  broadcast({
+    type: 'throwAnim', player: 0, angle: 0, velocity: 0,
+    bananaType: 'sunflare', isSunAttack: true, isGoldenGorilla: true,
+    goldenGorillaThrowSide: throwSide,
+  });
+  broadcast({ type: 'clusterSplit', x: ggCx, y: ggCy });
+
+  for (let i = 0; i < flareCount; i++) {
+    // Fan spread: ±56px around target with slight random jitter
+    const spread = (i - 2) * 28 + (Math.random() - 0.5) * 20;
+    const aimX = gcx + spread;
+    const aimY = gorilla.y + GORILLA_H * 0.5;
+    const dx = aimX - ggCx;
+    const dy = aimY - ggCy;
+    const T = 1.6 + Math.random() * 0.6;
+    const vx = dx / T;
+    const vy = (dy - 0.5 * gravity * T * T) / T;
+
+    const fb = {
+      x: ggCx, y: ggCy,
+      vx, vy,
+      tick: 0, frame: 0,
+      distanceTraveled: 0,
+      sunHitSent: true,
+      type: 'sunflare',
+      bouncesLeft: 0,
+      hasClusterSplit: true,
+      clusterIdx: i,
+      launchVelocity: Math.sqrt(vx * vx + vy * vy),
+      isSunAttack: true,
+      goldenGorillaAttack: true,
+      sunAttackTargetIdx: targetIdx,
+    };
+    match.bananas.push(fb);
+
+    simulateGGFlareBanana(fb, flareRadius, mapCfg, () => {
+      pending--;
+      if (pending === 0) onGoldenGorillaAttackComplete();
+    });
+  }
+}
+
+function simulateGGFlareBanana(cb, clusterRadius, mapCfg, onDone) {
+  const biomeCfg = BIOME_CONFIGS[match.roundBiome] || BIOME_CONFIGS.city;
+  let stepCount = 0;
+  const maxSteps = SIM_HZ * 10;
+
+  const simInterval = setInterval(() => {
+    if (match.state !== 'playing') { clearInterval(simInterval); onDone(); return; }
+    if (isGameplayPaused()) return;
+
+    const gravity = BASE_GRAVITY * match.settings.gravityMultiplier * biomeCfg.gravMult;
+    cb.vx += match.wind * 0.5 * DT;
+    cb.vy += gravity * DT;
+    cb.x += cb.vx * DT;
+    cb.y += cb.vy * DT;
+    cb.tick++;
+    stepCount++;
+
+    if (tickTurretsAgainstBanana(cb)) {
+      clearInterval(simInterval);
+      const idx = match.bananas.indexOf(cb);
+      if (idx >= 0) match.bananas.splice(idx, 1);
+      onDone();
+      return;
+    }
+
+    const result = checkBananaCollision(cb, simInterval, stepCount, clusterRadius, mapCfg);
+    if (result) {
+      const idx = match.bananas.indexOf(cb);
+      if (idx >= 0) match.bananas.splice(idx, 1);
+      onDone();
+      return;
+    }
+
+    if (cb.x < -50 || cb.x > mapCfg.w + 50 || cb.y > mapCfg.h + 50 || stepCount > maxSteps) {
+      clearInterval(simInterval);
+      const idx = match.bananas.indexOf(cb);
+      if (idx >= 0) match.bananas.splice(idx, 1);
+      onDone();
+      return;
+    }
+
+    if (cb.tick % BROADCAST_INTERVAL === 0) {
+      broadcast({ type: 'clusterBanana', idx: cb.clusterIdx, x: cb.x, y: cb.y });
+    }
+  }, 1000 / SIM_HZ);
+}
+
+function onGoldenGorillaAttackComplete() {
+  if (match.state !== 'playing') return;
+  if (match.goldenGorillaQueue && match.goldenGorillaQueue.length > 0) {
+    const next = match.goldenGorillaQueue.shift();
+    scheduleGameplayAction(() => fireGoldenGorillaBanana(next), 900);
+  } else {
+    match.goldenGorillaAttackInProgress = false;
+    scheduleGuardedSwitchTurn(500);
+  }
+}
+
 // ─── Banana physics simulation ──────────────────────────────────────────────
 function getBananaType() {
   if (match.settings.bananaType === 'random') {
@@ -1209,7 +1779,7 @@ function simulateBanana() {
   const mapCfg = getMapConfig();
   const biomeCfg = BIOME_CONFIGS[match.roundBiome] || BIOME_CONFIGS.city;
   const bananaCfg = BANANA_CONFIGS[sim.type] || BANANA_CONFIGS.standard;
-  const effectiveExpRadius = bananaCfg.radius != null ? bananaCfg.radius : match.settings.explosionRadius;
+  const effectiveExpRadius = sim.blastRadiusOverride ?? (bananaCfg.radius != null ? bananaCfg.radius : match.settings.explosionRadius);
 
   const simInterval = setInterval(() => {
     if (!match.banana || match.state !== 'playing') {
@@ -1285,8 +1855,8 @@ function simulateBanana() {
       if (tickTurretsAgainstBanana(sim)) {
         clearInterval(simInterval);
         match.banana = null;
-        recordMiss();
-        scheduleGuardedSwitchTurn(500);
+        if (sim.goldenGorillaAttack) { onGoldenGorillaAttackComplete(); }
+        else { recordMiss(); scheduleGuardedSwitchTurn(500); }
         return;
       }
 
@@ -1364,8 +1934,8 @@ function simulateBanana() {
           broadcast({ type: 'napalm', x: sim.x, y: mapCfg.h - 1, radius: effectiveExpRadius });
         }
       }
-      recordMiss();
-      scheduleGuardedSwitchTurn(600);
+      if (sim.goldenGorillaAttack) { onGoldenGorillaAttackComplete(); }
+      else { recordMiss(); scheduleGuardedSwitchTurn(600); }
       return;
     }
 
@@ -1373,8 +1943,8 @@ function simulateBanana() {
     if (sim.x < -50 || sim.x > mapCfg.w + 50 || sim.y > mapCfg.h + 50 || stepCount > maxSteps) {
       clearInterval(simInterval);
       match.banana = null;
-      recordMiss();
-      scheduleGuardedSwitchTurn(500);
+      if (sim.goldenGorillaAttack) { onGoldenGorillaAttackComplete(); }
+      else { recordMiss(); scheduleGuardedSwitchTurn(500); }
       return;
     }
 
@@ -1457,7 +2027,8 @@ function checkBananaCollision(sim, simInterval, stepCount, effectiveRadius, mapC
 
       if (sim.type === 'dud') {
         broadcast({ type: 'dud', x: bx, y: by, hitPlayer: gi + 1 });
-        scheduleGuardedSwitchTurn(1000);
+        if (sim.goldenGorillaAttack) onGoldenGorillaAttackComplete();
+        else scheduleGuardedSwitchTurn(1000);
         return true;
       }
 
@@ -1589,13 +2160,15 @@ function checkBananaCollision(sim, simInterval, stepCount, effectiveRadius, mapC
 
   // 3. Sun/moon hit
   {
-    const dx = bx - SUN_X;
+    const effectiveSunX = match.roundTimeOfDay === 'dawn' ? W * 0.85 :
+                          match.roundTimeOfDay === 'dusk' ? W * 0.15 : SUN_X;
+    const dx = bx - effectiveSunX;
     const dy = by - SUN_Y;
     const distSq = dx * dx + dy * dy;
     if (distSq <= SUN_RADIUS * SUN_RADIUS && !sim.sunHitSent) {
       sim.sunHitSent = true;
       broadcast({ type: 'sunHit' });
-      if (!sim.isSunAttack) handleSunHit(match.currentPlayer - 1);
+      if (!sim.isSunAttack && !match.goldenGorilla) handleSunHit(match.currentPlayer - 1);
     } else if (distSq > SUN_RADIUS * SUN_RADIUS) {
       sim.sunHitSent = false;
     }
@@ -1711,6 +2284,8 @@ function determineWinnerAndScore(hitGorillaIdx, deathX, deathY, forceScorerIdx =
     broadcast({ type: 'gorillaDeath', player: hitGorillaIdx + 1, x: deathX, y: deathY });
   }
 
+  if (match.goldenGorilla?.active) despawnGoldenGorilla();
+
   match.scores[scoringIdx]++;
   match.missStreak[scoringIdx] = 0;
 
@@ -1727,9 +2302,13 @@ function determineWinnerAndScore(hitGorillaIdx, deathX, deathY, forceScorerIdx =
     scoreMode: getScoreMode(),
     teamScores: getScoreMode() === 'team' ? getTeamScores() : null,
     scoreSummary: getScoreSummary(),
-    slowmo: winState.matchOver,
-    hostPlayer: getHostPlayerNumber(),
-  });
+      slowmo: winState.matchOver,
+      hostPlayer: getHostPlayerNumber(),
+      spectatorCount: getSpectatorCount(),
+      spectatorNames: getSpectatorNames(),
+      maxSpectators: MAX_SPECTATORS,
+      challengeQueue: getChallengeQueueView(),
+    });
 
   if (winState.matchOver) {
     match.state = 'matchOver';
@@ -1746,6 +2325,10 @@ function determineWinnerAndScore(hitGorillaIdx, deathX, deathY, forceScorerIdx =
       scoreSummary: getScoreSummary(),
       stats: match.stats.slice(0, getActivePlayerCount()),
       hostPlayer: getHostPlayerNumber(),
+      spectatorCount: getSpectatorCount(),
+      spectatorNames: getSpectatorNames(),
+      maxSpectators: MAX_SPECTATORS,
+      challengeQueue: getChallengeQueueView(),
     };
     clearAllIntervals();
     match.matchOverTimer = setTimeout(() => {
@@ -1861,6 +2444,8 @@ wss.on('connection', (ws) => {
       case 'setSettings': handleSetSettings(ws, msg); break;
       case 'leaveMatch': handleLeaveMatch(ws); break;
       case 'clearMatch': handleClearMatch(ws); break;
+      case 'challengePlayer': handleChallengePlayer(ws, msg); break;
+      case 'acceptChallenge': handleAcceptChallenge(ws); break;
       case 'chat': handleChat(ws, msg); break;
       case 'taunt': handleTaunt(ws, msg); break;
       case 'picnic': handlePicnic(ws); break;
@@ -1874,13 +2459,16 @@ wss.on('connection', (ws) => {
 
 function handleJoin(ws, msg) {
   const name = (typeof msg.name === 'string' ? msg.name.trim().substring(0, 20) : 'Player') || 'Player';
+  const requestedRole = msg.role === 'spectator' ? 'spectator' : 'player';
 
   // If no slots are occupied and no reconnect timers are pending, the match is
   // truly abandoned — reset so new players can join cleanly.
   // We must NOT reset when a disconnected player still has a valid reconnect
   // timer running, as that would destroy their reconnect slot.
-  const anyPlayerOrTimer = match.players.some((p, i) => p !== null || match.disconnectTimers[i] !== null);
-  if (!anyPlayerOrTimer) {
+  const anyPresence =
+    match.players.some((p, i) => p !== null || match.disconnectTimers[i] !== null) ||
+    getSpectatorCount() > 0;
+  if (!anyPresence) {
     clearAllIntervals();
     match = createMatch();
   }
@@ -1918,6 +2506,32 @@ function handleJoin(ws, msg) {
     for (let otherIdx = 0; otherIdx < getActivePlayerCount(); otherIdx++) {
       if (otherIdx !== i) sendTo(otherIdx, { type: 'opponentReconnected' });
     }
+    return;
+  }
+
+  const reconnectingSpectator = requestedRole === 'spectator' ? findSpectatorByToken(msg.token) : null;
+  if (reconnectingSpectator) {
+    reconnectingSpectator.ws = ws;
+    reconnectingSpectator.connected = true;
+    reconnectingSpectator.name = name;
+    if (match.spectatorDisconnectTimers.has(reconnectingSpectator.id)) {
+      clearTimeout(match.spectatorDisconnectTimers.get(reconnectingSpectator.id));
+      match.spectatorDisconnectTimers.delete(reconnectingSpectator.id);
+    }
+
+    ws.send(JSON.stringify(buildSpectatorAssignedPayload(reconnectingSpectator)));
+    if (match.state === 'waiting') {
+      sendWaitingState();
+    } else {
+      ws.send(JSON.stringify(buildStateSyncPayload()));
+    }
+    broadcastSpectatorStatus();
+    broadcastChallengeQueue();
+    return;
+  }
+
+  if (requestedRole === 'spectator') {
+    handleSpectatorJoin(ws, msg, name);
     return;
   }
 
@@ -1967,6 +2581,26 @@ function handleJoin(ws, msg) {
   maybeStartMatchFromWaiting();
 }
 
+function handleSpectatorJoin(ws, msg, name) {
+  if (!canJoinAsSpectator()) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Spectator seats are full' }));
+    ws.close();
+    return;
+  }
+
+  const spec = makeSpectator(name || 'Spectator', ws, msg.token || crypto.randomUUID());
+  ws.send(JSON.stringify(buildSpectatorAssignedPayload(spec)));
+
+  if (match.state === 'waiting') {
+    sendWaitingState();
+  } else {
+    ws.send(JSON.stringify(buildStateSyncPayload()));
+  }
+
+  broadcastSpectatorStatus();
+  broadcastChallengeQueue();
+}
+
 function maybeStartMatchFromWaiting() {
   if (match.state !== 'waiting') return false;
 
@@ -1983,7 +2617,12 @@ function maybeStartMatchFromWaiting() {
   }
 
   if (connectedCount < neededPlayers) return false;
-  match.rosterSize = isSoloTurnMode() ? 1 : Math.min(supportedPlayers, connectedCount);
+  if (match.settings.gameMode === 'hotseat') {
+    // Hot seat: one socket controls multiple gorillas locally.
+    match.rosterSize = getControlledPlayerCount();
+  } else {
+    match.rosterSize = isSoloTurnMode() ? 1 : Math.min(supportedPlayers, connectedCount);
+  }
 
   for (let i = 0; i < match.rosterSize; i++) {
     if (match.players[i]?.connected) {
@@ -2002,53 +2641,35 @@ function maybeStartMatchFromWaiting() {
 }
 
 function handleChat(ws, msg) {
-  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
-  if (playerIdx === -1) return;
-  const from = match.players[playerIdx].name;
+  const conn = findConnectionByWs(ws);
+  if (!conn) return;
+  const from = conn.client.name;
   const text = typeof msg.text === 'string' ? msg.text.trim().substring(0, 200) : '';
   if (!text) return;
 
   // Simple rate limiting: max 5 messages per 10 seconds
   const now = Date.now();
-  const times = match.chatTimes[playerIdx];
+  const times = conn.role === 'player' ? match.chatTimes[conn.playerIdx] : conn.client.chatTimes;
   while (times.length && times[0] < now - 10000) times.shift();
   if (times.length >= 5) return;
   times.push(now);
 
-  // Broadcast to ALL players including sender so everyone sees every message
-  broadcast({ type: 'chat', from, text });
+  // Broadcast to everyone including sender so chat stays consistent.
+  broadcast({
+    type: 'chat',
+    from,
+    text,
+    role: conn.role,
+    player: conn.role === 'player' ? conn.playerIdx + 1 : 0,
+    spectatorId: conn.role === 'spectator' ? conn.spectatorId : null,
+  });
 }
-
-const TAUNT_WINDOW_MS = 60000;   // rolling window
-const TAUNT_LIMIT     = 20;      // max taunts per window
-const TAUNT_COOLDOWN  = 15000;   // cooldown duration when limit exceeded
 
 function handleTaunt(ws, msg) {
   const playerIdx = match.players.findIndex(p => p && p.ws === ws);
   if (playerIdx === -1) return;
-  const now = Date.now();
-
-  // Still cooling down from previous burst
-  if (now < match.tauntCooldownUntil[playerIdx]) {
-    sendTo(playerIdx, { type: 'tauntCooldown', ms: match.tauntCooldownUntil[playerIdx] - now });
-    return;
-  }
-
-  // Prune old timestamps
-  const times = match.tauntTimes[playerIdx];
-  while (times.length && times[0] < now - TAUNT_WINDOW_MS) times.shift();
-
-  if (times.length >= TAUNT_LIMIT) {
-    match.tauntCooldownUntil[playerIdx] = now + TAUNT_COOLDOWN;
-    times.length = 0;
-    sendTo(playerIdx, { type: 'tauntCooldown', ms: TAUNT_COOLDOWN });
-    return;
-  }
-
-  times.push(now);
   const animId = Math.max(1, Math.min(100, Math.floor(Number(msg.animId) || 1)));
   const from = match.players[playerIdx].name;
-  // Broadcast to everyone (so multi-player observers also see it); include player index
   broadcast({ type: 'taunt', player: playerIdx + 1, from, animId });
 }
 
@@ -2078,9 +2699,20 @@ function handleFire(ws, msg) {
   if (match.state !== 'playing') return;
   if (isGameplayPaused()) return;
 
-  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
-  if (playerIdx === -1) return;
-  if (playerIdx + 1 !== match.currentPlayer) return;
+  const wsSlot = match.players.findIndex(p => p && p.ws === ws);
+  if (wsSlot === -1) return;
+
+  // In hot seat mode, the single connected socket (slot 0) fires on behalf of
+  // whichever gorilla's turn it currently is. Otherwise the firing slot must
+  // match the current turn.
+  let playerIdx;
+  if (match.settings.gameMode === 'hotseat') {
+    if (wsSlot !== 0) return;
+    playerIdx = match.currentPlayer - 1;
+  } else {
+    if (wsSlot + 1 !== match.currentPlayer) return;
+    playerIdx = wsSlot;
+  }
   if (match.banana || match.bananas.length > 0 || match.fireInProgress) return;
 
   // Atomically claim the fire slot before any async work to prevent a second
@@ -2498,13 +3130,30 @@ function handleClearMatch(ws) {
       p.ws.close();
     }
   }
+  for (const spec of match.spectators.values()) {
+    if (spec?.connected && spec.ws.readyState === 1) {
+      spec.ws.send(JSON.stringify({ type: 'matchCleared' }));
+      spec.ws.close();
+    }
+  }
   match = createMatch();
 }
 
 function handleSetProfile(ws, msg) {
-  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
-  if (playerIdx === -1) return;
+  const conn = findConnectionByWs(ws);
+  if (!conn) return;
 
+  if (conn.role === 'spectator') {
+    if (typeof msg.name === 'string') {
+      conn.client.name = msg.name.trim().substring(0, 20) || conn.client.name;
+    }
+    sendToSpectator(conn.client, buildSpectatorAssignedPayload(conn.client));
+    broadcastSpectatorStatus();
+    broadcastChallengeQueue();
+    return;
+  }
+
+  const playerIdx = conn.playerIdx;
   const player = match.players[playerIdx];
   if (typeof msg.name === 'string') {
     player.name = msg.name.trim().substring(0, 20) || player.name;
@@ -2521,6 +3170,65 @@ function handleSetProfile(ws, msg) {
   }
 
   broadcast(buildStateSyncPayload());
+}
+
+function handleChallengePlayer(ws, msg) {
+  const spec = findSpectatorByWs(ws);
+  if (!spec) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Only spectators can challenge players' }));
+    return;
+  }
+
+  const targetPlayer = Math.floor(Number(msg.targetPlayer) || 0);
+  const activeCount = getActivePlayerCount();
+  if (targetPlayer < 1 || targetPlayer > activeCount || !match.players[targetPlayer - 1]) {
+    ws.send(JSON.stringify({ type: 'error', message: 'That player seat is not available to challenge' }));
+    return;
+  }
+
+  const existing = match.challengeQueue.find(entry => entry.spectatorId === spec.id);
+  if (existing) {
+    existing.targetPlayer = targetPlayer;
+    existing.spectatorName = spec.name;
+  } else {
+    match.challengeQueue.push({
+      spectatorId: spec.id,
+      spectatorToken: spec.token,
+      spectatorName: spec.name,
+      targetPlayer,
+      createdAt: Date.now(),
+    });
+  }
+
+  sendToSpectator(spec, {
+    type: 'challengeQueued',
+    targetPlayer,
+    targetName: getPlayerNamesView()[targetPlayer - 1] || `Player ${targetPlayer}`,
+  });
+  broadcastChallengeQueue();
+}
+
+function handleAcceptChallenge(ws) {
+  if (match.state !== 'matchOver') {
+    ws.send(JSON.stringify({ type: 'error', message: 'Challenges can be accepted after the match ends' }));
+    return;
+  }
+
+  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
+  if (playerIdx === -1) return;
+
+  const nextChallenge = getNextChallengeForSlot(playerIdx);
+  if (!nextChallenge) {
+    ws.send(JSON.stringify({ type: 'error', message: 'No queued challenge for your seat' }));
+    return;
+  }
+
+  if (!claimQueuedChallengeForSlot(playerIdx, { convertOldPlayer: true })) {
+    ws.send(JSON.stringify({ type: 'error', message: 'No connected challenger is ready for your seat' }));
+    return;
+  }
+
+  broadcastChallengeQueue();
 }
 
 function handleSetPaused(ws, msg) {
@@ -2571,14 +3279,41 @@ function handleSetSettings(ws, msg) {
   if (SETTINGS_LIMITS.trailStyles.includes(msg.trailStyle)) s.trailStyle = msg.trailStyle;
   if (msg.crtOverlay !== undefined) s.crtOverlay = msg.crtOverlay === true;
 
+  // Hot seat: the host configures the second local player’s name/color via match settings.
+  if (typeof msg.player2Name === 'string') {
+    const trimmed = msg.player2Name.trim().substring(0, 20);
+    s.player2Name = trimmed || 'Player 2';
+  }
+  if (typeof msg.player2Color === 'string') {
+    s.player2Color = sanitizePlayerColor(msg.player2Color, getDefaultPlayerColor(1));
+  }
+
   broadcast({ type: 'settingsSync', settings: s });
   sendWaitingState();
   maybeStartMatchFromWaiting();
 }
 
 function handleLeaveMatch(ws) {
-  const playerIdx = match.players.findIndex(p => p && p.ws === ws);
-  if (playerIdx === -1) return;
+  const conn = findConnectionByWs(ws);
+  if (!conn) return;
+
+  if (conn.role === 'spectator') {
+    const spec = conn.client;
+    removeSpectatorChallenges(spec.id);
+    if (match.spectatorDisconnectTimers.has(spec.id)) {
+      clearTimeout(match.spectatorDisconnectTimers.get(spec.id));
+      match.spectatorDisconnectTimers.delete(spec.id);
+    }
+    match.spectators.delete(spec.id);
+    try {
+      ws.send(JSON.stringify({ type: 'leftMatch' }));
+    } catch (err) {}
+    broadcastSpectatorStatus();
+    broadcastChallengeQueue();
+    return;
+  }
+
+  const playerIdx = conn.playerIdx;
 
   const playerName = match.players[playerIdx]?.name || `Player ${playerIdx + 1}`;
   if (match.disconnectTimers[playerIdx]) {
@@ -2591,12 +3326,15 @@ function handleLeaveMatch(ws) {
   } catch (err) {}
 
   match.players[playerIdx] = null;
+  claimQueuedChallengeForSlot(playerIdx);
 
   const anyConnected = match.players.some(p => p?.connected);
   if (!anyConnected) {
     clearAllIntervals();
-    match = createMatch();
-    return;
+    if (getSpectatorCount() === 0) {
+      match = createMatch();
+      return;
+    }
   }
 
   clearAllIntervals();
@@ -2609,11 +3347,7 @@ function handleLeaveMatch(ws) {
   match.turrets = [];
   match.collapsedBuildingIndices = new Set();
 
-  for (let i = 0; i < match.players.length; i++) {
-    if (i !== playerIdx && match.players[i]?.connected) {
-      sendTo(i, { type: 'opponentLeft', player: playerIdx + 1, playerName });
-    }
-  }
+  broadcast({ type: 'opponentLeft', player: playerIdx + 1, playerName });
 
   sendWaitingState();
   maybeStartMatchFromWaiting();
@@ -2621,7 +3355,29 @@ function handleLeaveMatch(ws) {
 
 function handleDisconnect(ws) {
   const playerIdx = match.players.findIndex(p => p && p.ws === ws);
-  if (playerIdx === -1) return;
+  if (playerIdx === -1) {
+    const spec = findSpectatorByWs(ws);
+    if (!spec) return;
+
+    spec.connected = false;
+    spec.ws = null;
+    broadcastSpectatorStatus();
+
+    const timer = setTimeout(() => {
+      match.spectatorDisconnectTimers.delete(spec.id);
+      match.spectators.delete(spec.id);
+      removeSpectatorChallenges(spec.id);
+      if (!match.players.some(p => p) && getSpectatorCount() === 0) {
+        clearAllIntervals();
+        match = createMatch();
+        return;
+      }
+      broadcastSpectatorStatus();
+      broadcastChallengeQueue();
+    }, DISCONNECT_TIMEOUT_MS);
+    match.spectatorDisconnectTimers.set(spec.id, timer);
+    return;
+  }
 
   match.players[playerIdx].connected = false;
   const playerName = match.players[playerIdx].name || `Player ${playerIdx + 1}`;
@@ -2632,10 +3388,7 @@ function handleDisconnect(ws) {
   if (match.state === 'waiting') {
     sendWaitingState();
   } else {
-    // Notify ALL other connected players
-    for (let i = 0; i < 4; i++) {
-      if (i !== playerIdx) sendTo(i, { type: 'opponentDisconnected', player: playerIdx + 1, playerName });
-    }
+    broadcast({ type: 'opponentDisconnected', player: playerIdx + 1, playerName });
   }
 
   match.disconnectTimers[playerIdx] = setTimeout(() => {
@@ -2643,12 +3396,15 @@ function handleDisconnect(ws) {
     match.disconnectTimers[playerIdx] = null;
     match.banana = null;
     match.bananas = [];
+    claimQueuedChallengeForSlot(playerIdx);
 
     const anyConnected = match.players.some(p => p?.connected);
     if (!anyConnected) {
       clearAllIntervals();
-      match = createMatch();
-      return;
+      if (getSpectatorCount() === 0) {
+        match = createMatch();
+        return;
+      }
     }
 
     clearAllIntervals();
@@ -2658,10 +3414,7 @@ function handleDisconnect(ws) {
     match.matchOverSummary = null;
     match.turrets = [];
     match.collapsedBuildingIndices = new Set();
-    // Notify remaining connected players
-    for (let i = 0; i < 4; i++) {
-      if (i !== playerIdx) sendTo(i, { type: 'opponentTimedOut', player: playerIdx + 1, playerName });
-    }
+    broadcast({ type: 'opponentTimedOut', player: playerIdx + 1, playerName });
     sendWaitingState();
   }, DISCONNECT_TIMEOUT_MS);
 }

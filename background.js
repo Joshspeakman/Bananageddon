@@ -708,6 +708,31 @@ const Background = (function () {
     ctx.fillRect(x + 2, y + 2, 2, 1);
   }
 
+  function drawHelicopter(ctx, x, y, bodyColor, windowColor, dir) {
+    const rotorFrame = Math.floor(performance.now() / 90) % 2;
+    // Fuselage
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(x - 5, y, 10, 3);
+    // Cockpit window (front-facing)
+    ctx.fillStyle = windowColor;
+    const front = dir >= 0 ? x + 2 : x - 6;
+    ctx.fillRect(front, y - 1, 4, 3);
+    // Tail boom
+    ctx.fillStyle = bodyColor;
+    const tailBase = dir >= 0 ? x - 10 : x + 5;
+    ctx.fillRect(tailBase, y + 1, 6, 1);
+    // Tail rotor (vertical blip at tip)
+    const tailTip = dir >= 0 ? x - 10 : x + 10;
+    ctx.fillRect(tailTip, y, 1, 3);
+    // Main rotor (spinning — alternates long/short to suggest rotation)
+    ctx.fillStyle = '#444444';
+    if (rotorFrame === 0) {
+      ctx.fillRect(x - 9, y - 2, 18, 1);
+    } else {
+      ctx.fillRect(x - 2, y - 2, 4, 1);
+    }
+  }
+
   function drawPixelBirdShape(ctx, x, y, color, flapUp) {
     ctx.fillStyle = color;
     if (flapUp) {
@@ -765,13 +790,13 @@ const Background = (function () {
 
     switch (currentBiome) {
       case 'city': {
-        for (let i = 0; i < Math.round(6 * scale); i++) {
-          const laneY = H * (0.18 + (i % 3) * 0.05);
+        for (let i = 0; i < Math.round(3 * scale); i++) {
+          const laneY = H * (0.20 + (i % 3) * 0.07);
           const dir = i % 2 === 0 ? 1 : -1;
-          const span = W + 90;
-          let x = wrap(t * (28 + i * 2) + i * 97, span) - 45;
+          const span = W + 80;
+          let x = wrap(t * (12 + i * 4) + i * 130, span) - 40;
           if (dir < 0) x = W - x;
-          drawHoverCar(ctx, Math.floor(x), Math.floor(laneY + Math.sin(t * 2 + i) * 2), palette.glow, palette.accent, dir);
+          drawHelicopter(ctx, Math.floor(x), Math.floor(laneY + Math.sin(t * 1.4 + i) * 3), '#3A4A5A', alphaColor(palette.glow, 0.9), dir);
         }
         for (let i = 0; i < 4; i++) {
           const bx = W * (0.12 + i * 0.2);

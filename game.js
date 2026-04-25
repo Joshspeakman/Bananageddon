@@ -477,22 +477,35 @@
   let previousState = null;
   let myPlayer = 0;
   let hostPlayer = 0;
+  let clientRole = 'player';
+  let pendingJoinRole = 'player';
+  let mySpectatorId = null;
   let myName = 'Player';
   let myColor = getDefaultPlayerColor(0);
   let scores = buildDefaultScores();
   let playerNames = buildDefaultPlayerNames();
   let playerColors = buildDefaultPlayerColors();
   let playerTeams = buildDefaultPlayerTeams();
+  let spectatorCount = 0;
+  let spectatorNames = [];
+  let maxSpectators = 8;
+  let challengeQueue = [];
   let scoreMode = 'individual';
   let teamScores = null;
   let currentPlayer = 1;
   let wind = 0;
+  // Hot seat: when the local turn changes mid-match, an overlay blocks input
+  // until the new player presses READY (so the next player can't see the prior
+  // angle/velocity entries).
+  let hotseatPassPending = false;
+  let hotseatLastShownPlayer = 0;
 
   // Settings (synced from server)
   let settings = {
     ...DEFAULT_SETTINGS,
     musicEnabled: true,
     sfxEnabled: true,
+    spectatorChatMuted: false,
   };
 
   let serverPaused = false;
@@ -557,22 +570,47 @@
   // Possible emotes: 'idle', 'watching', 'worried', 'surprised', 'winking', 'hit',
   //                  'happy' (on miss), 'shocked' (on gorilla hit), 'celebrating'
   let sunEmote = 'idle';
+  let sunPersistentEmote = 'idle'; // anger level that persists until round ends
   let sunEmoteTimer = null;
   let sunWatchFrame = 0; // for eye tracking animation
   let sunSurprised = false; // kept for backward compat
   let sunSurpriseTimer = null;
   let sunWinking = false;
   let sunWinkTimer = null;
+  let sunSwearText = '';
+  let sunSwearVisible = false;
+  let sunSwearTimer = null;
+  let sunSwearStartTime = 0;
+  let goldenGorillaActive = false;
+  let goldenGorillaPos = null;
+  let goldenGorillaThrowAnim = 0;
+  let goldenGorillaThrowTimer = null;
+  let goldenGorillaSpawnTime = 0;
 
   function setSunEmote(emote, duration) {
+    // Anger emotes persist for the rest of the round — only escalate, never go back
+    if (emote === 'annoyed' || emote === 'angry' || emote === 'furious') {
+      const angerRank = { annoyed: 1, angry: 2, furious: 3 };
+      const curRank = angerRank[sunPersistentEmote] || 0;
+      if (angerRank[emote] > curRank) sunPersistentEmote = emote;
+    }
     sunEmote = emote;
     if (sunEmoteTimer) clearTimeout(sunEmoteTimer);
     sunEmoteTimer = null;
     if (duration > 0) {
       sunEmoteTimer = setTimeout(() => {
-        sunEmote = 'idle';
+        sunEmote = sunPersistentEmote;
         sunEmoteTimer = null;
       }, duration);
+    }
+    if (emote === 'attacking') {
+      const chars = '@#$%!*&^~?';
+      const len = 3 + Math.floor(Math.random() * 3);
+      sunSwearText = Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      sunSwearVisible = true;
+      sunSwearStartTime = performance.now();
+      if (sunSwearTimer) clearTimeout(sunSwearTimer);
+      sunSwearTimer = setTimeout(() => { sunSwearVisible = false; }, 1800);
     }
   }
 
@@ -612,6 +650,10 @@
   let sessionToken = null;
   try { sessionToken = sessionStorage.getItem('mm_token'); } catch(e) {}
   try {
+    const storedRole = sessionStorage.getItem('mm_role');
+    if (storedRole === 'spectator') clientRole = 'spectator';
+  } catch(e) {}
+  try {
     const storedHostPlayer = parseInt(sessionStorage.getItem('mm_host_player'), 10);
     hostPlayer = Number.isFinite(storedHostPlayer) ? storedHostPlayer : 0;
   } catch(e) {}
@@ -622,7 +664,7 @@
   let reconnectTimer = null;
   let reconnectAttempts = 0;
   let suppressReconnect = false;
-  const MAX_RECONNECT_ATTEMPTS = 20; // 3s intervals ≈ 60s (matches server's 60s timer)
+  const MAX_RECONNECT_ATTEMPTS = 5; // 3s intervals ~= server's 15s reconnect window
 
   // Building collapse tracking
   let collapsedBuildings = new Set();
@@ -630,6 +672,7 @@
   const PLAYER_NAME_INPUT_IDS = ['player-name', 'pause-player-name'];
   const MUSIC_TOGGLE_CONTROL_IDS = ['music-select', 'pause-music-select'];
   const SFX_TOGGLE_CONTROL_IDS = ['pause-sfx-select'];
+  const SPECTATOR_CHAT_MUTE_IDS = ['spectator-chat-select', 'pause-spectator-chat-select'];
   const SHAKE_SELECT_IDS = ['shake-select', 'pause-shake-select'];
   const TRAIL_SELECT_IDS = ['trail-select', 'pause-trail-select'];
   const CRT_SELECT_IDS = ['crt-select', 'pause-crt-select'];
@@ -723,6 +766,7 @@
       s.crt = getControlValue(CRT_SELECT_IDS, String(settings.crtOverlay));
       s.music = getControlValue(MUSIC_TOGGLE_CONTROL_IDS, 'true');
       s.sfxEnabled = getControlValue(SFX_TOGGLE_CONTROL_IDS, 'true');
+      s.spectatorChatMuted = getControlValue(SPECTATOR_CHAT_MUTE_IDS, 'false');
       s.musicOrder = document.getElementById('music-order-select').value;
       s.musicVolume = getVolumePercent(MUSIC_VOLUME_CONTROL_IDS);
       s.sfxVolume = getVolumePercent(SFX_VOLUME_CONTROL_IDS);
@@ -759,6 +803,7 @@
       if (s.crt) setControlValues(CRT_SELECT_IDS, s.crt);
       if (s.music) setControlValues(MUSIC_TOGGLE_CONTROL_IDS, s.music);
       if (s.sfxEnabled) setControlValues(SFX_TOGGLE_CONTROL_IDS, s.sfxEnabled);
+      if (s.spectatorChatMuted) setControlValues(SPECTATOR_CHAT_MUTE_IDS, s.spectatorChatMuted);
       if (s.musicOrder) document.getElementById('music-order-select').value = s.musicOrder;
       if (s.musicVolume !== undefined) setVolumeControl(MUSIC_VOLUME_CONTROL_IDS, MUSIC_VOLUME_READOUT_IDS, s.musicVolume);
       if (s.sfxVolume !== undefined) setVolumeControl(SFX_VOLUME_CONTROL_IDS, SFX_VOLUME_READOUT_IDS, s.sfxVolume);
@@ -784,6 +829,7 @@
       sessionStorage.setItem('mm_name', myName);
       sessionStorage.setItem('mm_color', myColor);
       sessionStorage.setItem('mm_host_player', String(hostPlayer || 0));
+      sessionStorage.setItem('mm_role', clientRole);
     } catch (e) {}
   }
 
@@ -797,6 +843,15 @@
 
   function syncHostPlayerFromMessage(msg) {
     if (msg && msg.hostPlayer !== undefined) updateHostPlayer(msg.hostPlayer);
+  }
+
+  function syncSpectatorsFromMessage(msg) {
+    if (!msg) return;
+    if (typeof msg.spectatorCount === 'number') spectatorCount = Math.max(0, msg.spectatorCount | 0);
+    if (Array.isArray(msg.spectatorNames)) spectatorNames = msg.spectatorNames.slice();
+    if (typeof msg.maxSpectators === 'number') maxSpectators = Math.max(0, msg.maxSpectators | 0);
+    if (Array.isArray(msg.challengeQueue)) challengeQueue = msg.challengeQueue.slice();
+    updateSpectatorUI();
   }
 
   function getSelectedPlayerColor() {
@@ -828,6 +883,17 @@
     settings.crtOverlay = getControlValue(CRT_SELECT_IDS, String(settings.crtOverlay)) === 'true';
     settings.musicEnabled = isMusicEnabled();
     settings.sfxEnabled = isSfxEnabled();
+    settings.spectatorChatMuted = getControlValue(SPECTATOR_CHAT_MUTE_IDS, 'false') === 'true';
+    // Hot seat: capture the second local player's identity for the host to broadcast.
+    const p2NameEl = document.getElementById('player2-name');
+    const p2ColorEl = document.getElementById('player2-color');
+    if (p2NameEl) {
+      const trimmed = (p2NameEl.value || '').trim();
+      settings.player2Name = trimmed.substring(0, 20) || 'Player 2';
+    }
+    if (p2ColorEl) {
+      settings.player2Color = sanitizePlayerColor(p2ColorEl.value, settings.player2Color || getDefaultPlayerColor(1));
+    }
   }
 
   function applyLocalVisualSettingsFromControls() {
@@ -863,6 +929,12 @@
     document.getElementById('explosive-select').value = '30';
     document.getElementById('banana-select').value = 'standard';
     document.getElementById('friendlyfire-select').value = 'true';
+    const p2NameInput = document.getElementById('player2-name');
+    if (p2NameInput) p2NameInput.value = 'Player 2';
+    const p2ColorInput = document.getElementById('player2-color');
+    if (p2ColorInput) p2ColorInput.value = '#FF8A4C';
+    const p2ColorReadout = document.getElementById('player2-color-readout');
+    if (p2ColorReadout) p2ColorReadout.textContent = '#FF8A4C';
     setControlValues(SHAKE_SELECT_IDS, 'normal');
     setControlValues(TRAIL_SELECT_IDS, 'dotted');
     setControlValues(CRT_SELECT_IDS, 'true');
@@ -885,7 +957,7 @@
   let sfxMasterGain = null;
   const activeHtmlSfxInstances = new Set();
   const BG_MUSIC_BASE_VOLUME = 0.3;
-  const VICTORY_MUSIC_BASE_VOLUME = 0.4;
+  const VICTORY_MUSIC_BASE_VOLUME = 0.3;
 
   function ensureAudio() {
     if (!audioCtx) {
@@ -1220,16 +1292,16 @@
   }
 
   // ─── Chat ──────────────────────────────────────────────────────────────────
-  function appendChatMessage(name, text, playerIdx) {
+  function appendChatMessage(name, text, playerIdx, role = 'player') {
     const log = document.getElementById('chat-log');
     if (!log) return;
     const div = document.createElement('div');
-    div.className = 'chat-msg';
+    div.className = role === 'spectator' ? 'chat-msg chat-msg-spectator' : 'chat-msg';
     if (name) {
       const nameSpan = document.createElement('span');
-      const chatClass = playerIdx >= 0 && playerIdx < 4 ? `p${playerIdx + 1}` : 'system';
+      const chatClass = role === 'spectator' ? 'spectator' : (playerIdx >= 0 && playerIdx < 4 ? `p${playerIdx + 1}` : 'system');
       nameSpan.className = 'chat-msg-name ' + chatClass;
-      nameSpan.textContent = name + ': ';
+      nameSpan.textContent = (role === 'spectator' ? `[SPEC] ${name}` : name) + ': ';
       div.appendChild(nameSpan);
     }
     const textSpan = document.createElement('span');
@@ -1759,6 +1831,7 @@
   }
 
   function drawSun() {
+    if (goldenGorillaActive) return;
     const palette = getRoundPalette();
     // Adjust sun position for dawn/dusk
     let cx = SUN_X;
@@ -1799,6 +1872,7 @@
       ctx.fill();
       // Moon face on the lit portion
       drawCelestialFace(cx - 5, cy, sunEmote, true);
+      drawSunSwearBubble(cx - 5, cy);
       return;
     }
 
@@ -1845,6 +1919,7 @@
 
     // Face
     drawCelestialFace(cx, cy, sunEmote, false);
+    drawSunSwearBubble(cx, cy);
   }
 
   function drawCelestialFace(cx, cy, emote, isMoon) {
@@ -2092,6 +2167,114 @@
         break;
       }
     }
+  }
+
+  function drawSunSwearBubble(cx, cy) {
+    if (!sunSwearVisible || !sunSwearText) return;
+    const elapsed = performance.now() - sunSwearStartTime;
+    const fadeDur = 300;
+    const totalDur = 1800;
+    let alpha = 1;
+    if (elapsed < fadeDur) alpha = elapsed / fadeDur;
+    else if (elapsed > totalDur - fadeDur) alpha = Math.max(0, (totalDur - elapsed) / fadeDur);
+
+    const pad = 4;
+    ctx.font = 'bold 9px monospace';
+    const tw = ctx.measureText(sunSwearText).width;
+    const bw = tw + pad * 2;
+    const bh = 13;
+    const bx = cx - bw / 2;
+    const by = cy - 34 - bh;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // Bubble body
+    ctx.fillStyle = '#FFFFFF';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(bx, by, bw, bh, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    // Tail (small triangle pointing down toward sun face)
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.moveTo(cx - 3, by + bh);
+    ctx.lineTo(cx + 3, by + bh);
+    ctx.lineTo(cx, by + bh + 5);
+    ctx.fill();
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - 3, by + bh);
+    ctx.lineTo(cx, by + bh + 5);
+    ctx.lineTo(cx + 3, by + bh);
+    ctx.stroke();
+
+    // Symbols — each one a different angry color
+    const colors = ['#CC0000', '#FF6600', '#9900CC', '#0000CC', '#006600'];
+    const chars = sunSwearText.split('');
+    const charW = tw / chars.length;
+    ctx.font = 'bold 9px monospace';
+    chars.forEach((ch, i) => {
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.fillText(ch, bx + pad + i * charW, by + bh - 3);
+    });
+
+    ctx.restore();
+  }
+
+  const GOLDEN_GORILLA_RAMP = {
+    fill:      '#FFEE00',
+    highlight: '#FFFF99',
+    shadow:    '#AA7700',
+    detail:    '#FFFF55',
+    glow:      '#FFDD00',
+    outline:   '#664400',
+    muzzle:    '#FFD044',
+    face:      '#FFAA22',
+    hand:      '#CC8800',
+    foot:      '#553300',
+  };
+
+  function drawGoldenGorilla() {
+    if (!goldenGorillaActive || !goldenGorillaPos) return;
+    const { x, y } = goldenGorillaPos;
+    const cx = x + GORILLA_W / 2;
+    const cy = y + GORILLA_H / 2;
+    const now = performance.now();
+    const elapsed = now - goldenGorillaSpawnTime;
+
+    // Pulsing neon glow behind
+    const pulse = 0.5 + 0.5 * Math.sin(now / 220);
+    ctx.save();
+    ctx.globalAlpha = 0.28 + pulse * 0.22;
+    ctx.fillStyle = '#FFEE00';
+    ctx.beginPath();
+    ctx.arc(cx, cy - 4, 22 + pulse * 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Gorilla sprite in neon yellow
+    const side = goldenGorillaThrowAnim === 2 ? 1 : (goldenGorillaThrowAnim === 1 ? -1 : -1);
+    drawGorillaSprite(ctx, cx, cy, goldenGorillaThrowAnim, 'normal', false, GOLDEN_GORILLA_RAMP, side);
+
+    // "GOLDEN GORILLA" label fades in
+    const labelAlpha = Math.min(1, elapsed / 500);
+    ctx.save();
+    ctx.globalAlpha = labelAlpha;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 7px monospace';
+    ctx.fillStyle = '#664400';
+    ctx.fillText('GOLDEN GORILLA', cx + 1, y - 7);
+    ctx.fillStyle = '#FFEE00';
+    ctx.fillText('GOLDEN GORILLA', cx, y - 8);
+    ctx.restore();
+
+    // Swear bubble above the label when throwing
+    drawSunSwearBubble(cx, y - 18);
   }
 
   function drawBuildings() {
@@ -2581,6 +2764,59 @@
     c.restore();
   }
 
+  const DEFEATED_CURSE_TEXT = ['@#$!', '%&*!', '#!?@', '*$#?'];
+
+  function drawDefeatedCurseBubble(c, cx, cy, mirror, t) {
+    const text = DEFEATED_CURSE_TEXT[Math.floor(t / 520) % DEFEATED_CURSE_TEXT.length];
+    const wobble = Math.round(Math.sin(t / 140) * 2);
+    const bx = Math.round(cx - 25 + (mirror ? -4 : 4));
+    const by = Math.round(cy - 74 + wobble);
+    const bw = 50;
+    const bh = 20;
+
+    c.save();
+    c.font = 'bold 13px monospace';
+    c.lineWidth = 2;
+    c.fillStyle = '#FFFFFF';
+    c.strokeStyle = '#101010';
+    c.beginPath();
+    c.roundRect(bx, by, bw, bh, 4);
+    c.fill();
+    c.stroke();
+
+    c.beginPath();
+    c.moveTo(cx - 5, by + bh - 1);
+    c.lineTo(cx + 2, by + bh - 1);
+    c.lineTo(cx - (mirror ? 4 : -4), by + bh + 8);
+    c.closePath();
+    c.fill();
+    c.stroke();
+
+    const colors = ['#CC0000', '#FF6600', '#7700CC', '#111111'];
+    for (let i = 0; i < text.length; i++) {
+      c.fillStyle = colors[i % colors.length];
+      c.fillText(text[i], bx + 8 + i * 9, by + 14);
+    }
+    c.restore();
+  }
+
+  function drawDefeatedMonkey(c, cx, cy, sc, mirror, color, t) {
+    const slump = Math.round(Math.sin(t / 420) * 2);
+    const faceCycle = Math.floor(t / 650) % 3;
+    const face = faceCycle === 0 ? 'c' : (faceCycle === 1 ? 'frustrated' : 'a');
+    const pose = faceCycle === 2 ? 3 : 4;
+    const tilt = mirror ? 0.12 : -0.12;
+
+    c.save();
+    c.translate(cx, cy + 13 + slump);
+    c.scale(mirror ? -sc : sc, sc);
+    c.rotate(tilt);
+    drawGorillaSprite(c, 0, 0, pose, face, false, getGorillaRamp(color), mirror ? 1 : -1);
+    c.restore();
+
+    drawDefeatedCurseBubble(c, cx, cy, mirror, t);
+  }
+
   // Dance pose sequence (index = beat mod 8)
   const DANCE_POSES = [3, 0, 3, 4, 1, 3, 2, 3];
 
@@ -2605,19 +2841,22 @@
     function frame() {
       const t    = Date.now();
       const beat = Math.floor(t / 210) % DANCE_POSES.length;
-      const pose = DANCE_POSES[beat];
-      const face = (Math.floor(t / 900) % 4 === 0) ? 't' : 'h';
+      const dancePose = DANCE_POSES[beat];
+      const danceFace = (Math.floor(t / 900) % 4 === 0) ? 't' : 'h';
 
-      // Winner gets a bigger bounce; loser gets a smaller one
-      const lBounce = Math.sin(t / 190) * (winnerIdx === 0 ? 8 : 4);
-      const rBounce = Math.sin(t / 190) * (winnerIdx === 1 ? 8 : 4);
+      const lBounce = Math.sin(t / 190) * 8;
+      const rBounce = Math.sin(t / 190) * 8;
 
       lc.clearRect(0, 0, lCanvas.width, lCanvas.height);
       rc.clearRect(0, 0, rCanvas.width, rCanvas.height);
 
-      drawDancingMonkey(lc, LCX, LCY - lBounce, SC, pose, face, false, leftColor);
-      // Right monkey faces left (mirror)
-      drawDancingMonkey(rc, RCX, RCY - rBounce, SC, pose, face, true, rightColor);
+      if (winnerIdx === 0) {
+        drawDancingMonkey(lc, LCX, LCY - lBounce, SC, dancePose, danceFace, false, leftColor);
+        drawDefeatedMonkey(rc, RCX, RCY, SC, true, rightColor, t);
+      } else {
+        drawDefeatedMonkey(lc, LCX, LCY, SC, false, leftColor, t);
+        drawDancingMonkey(rc, RCX, RCY - rBounce, SC, dancePose, danceFace, true, rightColor);
+      }
 
       _danceAnimId = requestAnimationFrame(frame);
     }
@@ -3188,6 +3427,9 @@
         drawGorilla(gorillas[gi].x, gorillas[gi].y, gorillaAnim[gi], gi);
       }
 
+      // 6.25 Golden Gorilla (rendered on top of regular gorillas)
+      drawGoldenGorilla();
+
       // 6.5 Turrets — rendered before bananas so a banana in front occludes
       for (const t of turrets) {
         // Decay barrel kick over real time so recoil feels snappy regardless of cinematic slowdown
@@ -3269,6 +3511,10 @@
 
   function isHostPlayer() {
     return myPlayer > 0 && myPlayer === hostPlayer;
+  }
+
+  function isSpectator() {
+    return clientRole === 'spectator';
   }
 
   function getModeConfigLocal(mode = settings.gameMode) {
@@ -3436,6 +3682,97 @@
         'Press R for rematch | N for new match | Esc for title' :
         'Waiting for host to choose rematch or new match | Esc for title';
     }
+    updateSpectatorUI();
+  }
+
+  function getMyQueuedChallenge() {
+    return challengeQueue.find(entry => entry.spectatorId === mySpectatorId) || null;
+  }
+
+  function getChallengeForMySeat() {
+    if (myPlayer < 1) return null;
+    return challengeQueue.find(entry => entry.targetPlayer === myPlayer) || null;
+  }
+
+  function renderChallengeQueueText() {
+    if (!challengeQueue.length) return 'No spectator challenges queued.';
+    return challengeQueue
+      .map((entry, idx) => `${idx + 1}. ${entry.spectatorName} -> ${entry.targetName || `Player ${entry.targetPlayer}`}`)
+      .join('  ');
+  }
+
+  function renderChallengeButtons(container) {
+    if (!container) return;
+    clearElement(container);
+    if (!isSpectator()) return;
+
+    const queued = getMyQueuedChallenge();
+    const activeCount = Math.max(1, getActivePlayerCountLocal());
+    for (let i = 0; i < activeCount; i++) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'spectator-challenge-btn';
+      btn.textContent = queued && queued.targetPlayer === i + 1 ? `QUEUED P${i + 1}` : `CHALLENGE P${i + 1}`;
+      btn.disabled = !!queued && queued.targetPlayer === i + 1;
+      btn.addEventListener('click', () => {
+        Net.send({ type: 'challengePlayer', targetPlayer: i + 1 });
+      });
+      container.appendChild(btn);
+    }
+  }
+
+  function updateSpectatorUI() {
+    const hudSpec = document.getElementById('hud-spectators');
+    if (hudSpec) hudSpec.textContent = `SPEC ${spectatorCount}/${maxSpectators}`;
+
+    const panel = document.getElementById('spectator-panel');
+    const copy = document.getElementById('spectator-panel-copy');
+    const buttons = document.getElementById('spectator-challenge-buttons');
+    const queueList = document.getElementById('challenge-queue-list');
+    if (panel) panel.style.display = isSpectator() ? 'flex' : 'none';
+    if (copy) {
+      const queued = getMyQueuedChallenge();
+      copy.textContent = queued ?
+        `Queued for ${queued.targetName || `Player ${queued.targetPlayer}`}. First open seat wins.` :
+        'Challenge a player to claim the next open seat.';
+    }
+    renderChallengeButtons(buttons);
+    if (queueList) queueList.textContent = renderChallengeQueueText();
+
+    const matchPanel = document.getElementById('match-challenge-panel');
+    if (matchPanel) {
+      clearElement(matchPanel);
+      if (isSpectator()) {
+        const copyEl = document.createElement('div');
+        const queued = getMyQueuedChallenge();
+        copyEl.textContent = queued ?
+          `You are queued for ${queued.targetName || `Player ${queued.targetPlayer}`}.` :
+          'Challenge a player for the next open seat.';
+        matchPanel.appendChild(copyEl);
+        const row = document.createElement('div');
+        row.className = 'spectator-challenge-buttons';
+        renderChallengeButtons(row);
+        matchPanel.appendChild(row);
+      } else if (myPlayer > 0) {
+        const challenger = getChallengeForMySeat();
+        if (challenger) {
+          const copyEl = document.createElement('div');
+          copyEl.textContent = `${challenger.spectatorName} is first in line for your seat.`;
+          matchPanel.appendChild(copyEl);
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'match-action-btn';
+          btn.textContent = 'GIVE SEAT';
+          btn.addEventListener('click', () => Net.send({ type: 'acceptChallenge' }));
+          matchPanel.appendChild(btn);
+        }
+      }
+
+      const queueEl = document.createElement('div');
+      queueEl.className = 'challenge-queue-list';
+      queueEl.textContent = renderChallengeQueueText();
+      matchPanel.appendChild(queueEl);
+    }
   }
 
   function updateRoundsLabel() {
@@ -3461,6 +3798,22 @@
     setControlValues(SHAKE_SELECT_IDS, settings.shakeIntensity);
     setControlValues(TRAIL_SELECT_IDS, settings.trailStyle);
     setControlValues(CRT_SELECT_IDS, String(settings.crtOverlay));
+    const p2NameEl = document.getElementById('player2-name');
+    const p2ColorEl = document.getElementById('player2-color');
+    const p2ColorRead = document.getElementById('player2-color-readout');
+    if (p2NameEl) p2NameEl.value = settings.player2Name || 'Player 2';
+    if (p2ColorEl) p2ColorEl.value = settings.player2Color || getDefaultPlayerColor(1);
+    if (p2ColorRead) p2ColorRead.textContent = (settings.player2Color || getDefaultPlayerColor(1)).toUpperCase();
+    updateHotseatFieldsVisibility();
+  }
+
+  function updateHotseatFieldsVisibility() {
+    const fields = document.getElementById('hotseat-player2-fields');
+    if (!fields) return;
+    const modeSelect = document.getElementById('gamemode-select');
+    const mode = modeSelect ? modeSelect.value : settings.gameMode;
+    const canEdit = !Net.isConnected() || isHostPlayer();
+    fields.style.display = (mode === 'hotseat' && canEdit) ? '' : 'none';
   }
 
   function updateSetupPresentation(joining) {
@@ -3470,15 +3823,19 @@
     const setupHint = document.querySelector('.setup-hint');
     const hostNote = document.getElementById('setup-host-note');
     const resetBtn = document.getElementById('reset-classic-btn');
-    const canEditMatchSettings = !connected || isHostPlayer();
+    const canEditMatchSettings = (!connected && pendingJoinRole !== 'spectator') || isHostPlayer();
     const localOnlyIds = new Set(['music-select', 'music-order-select', 'effects-quality-select']);
 
     if (connected) {
-      hostSettings.style.display = 'block';
-      setupHeader.textContent = 'LOBBY SETTINGS';
-      setupHint.textContent = isHostPlayer() ?
+      hostSettings.style.display = isSpectator() ? 'none' : 'block';
+      setupHeader.textContent = isSpectator() ? 'SPECTATOR PROFILE' : 'LOBBY SETTINGS';
+      setupHint.textContent = isSpectator() ? 'Press Enter to return to the game' : (isHostPlayer() ?
         'Press Enter to sync settings and return to the lobby' :
-        'Press Enter to return to the lobby';
+        'Press Enter to return to the lobby');
+    } else if (pendingJoinRole === 'spectator') {
+      hostSettings.style.display = 'none';
+      setupHeader.textContent = 'SPECTATE GAME';
+      setupHint.textContent = 'Press Enter to spectate';
     } else if (joining) {
       hostSettings.style.display = 'none';
       setupHeader.textContent = 'JOIN GAME';
@@ -3493,7 +3850,7 @@
       el.disabled = !canEditMatchSettings && !localOnlyIds.has(el.id);
     });
 
-    hostNote.style.display = connected && !isHostPlayer() ? 'block' : 'none';
+    hostNote.style.display = connected && !isHostPlayer() && !isSpectator() ? 'block' : 'none';
     resetBtn.style.display = connected && !isHostPlayer() ? 'none' : 'block';
   }
 
@@ -3507,27 +3864,28 @@
       Number(msg?.supportedPlayers || getModeConfigLocal().supportedPlayers || requiredPlayers)
     );
     const connectedPlayers = Math.max(1, Number(msg?.connectedPlayers || playerNames.length || 1));
+    const specText = spectatorCount > 0 ? ` Spectators: ${spectatorCount}/${maxSpectators}.` : '';
     const remaining = Math.max(0, requiredPlayers - connectedPlayers);
     const modeLabel = getModeConfigLocal(msg?.mode || settings.gameMode).label;
 
     if (connectedPlayers > supportedPlayers) {
       statusEl.textContent =
-        `${modeLabel} supports up to ${supportedPlayers} player${supportedPlayers === 1 ? '' : 's'}. ${connectedPlayers} are connected.`;
+        `${modeLabel} supports up to ${supportedPlayers} player${supportedPlayers === 1 ? '' : 's'}. ${connectedPlayers} are connected.${specText}`;
       return;
     }
 
     if (isHostPlayer()) {
       if (remaining <= 0) {
-        statusEl.textContent = 'Lobby ready. Starting match...';
+        statusEl.textContent = `Lobby ready. Starting match...${specText}`;
       } else if (remaining === 1) {
-        statusEl.textContent = 'Share the URL above with 1 more player';
+        statusEl.textContent = `Share the URL above with 1 more player.${specText}`;
       } else {
-        statusEl.textContent = `Share the URL above with ${remaining} more players`;
+        statusEl.textContent = `Share the URL above with ${remaining} more players.${specText}`;
       }
     } else {
       statusEl.textContent = remaining > 0 ?
-        'Waiting for more players to join...' :
-        'Waiting for host to start the game...';
+        `Waiting for more players to join...${specText}` :
+        `Waiting for host to start the game...${specText}`;
     }
   }
 
@@ -3697,6 +4055,15 @@
     gameState = 'title';
     myPlayer = 0;
     hostPlayer = 0;
+    clientRole = 'player';
+    pendingJoinRole = 'player';
+    mySpectatorId = null;
+    challengeQueue = [];
+    // Reset hot-seat overlay state so it doesn't bleed across sessions
+    hotseatLastShownPlayer = 0;
+    hotseatPassPending = false;
+    const _hotseatOverlay = document.getElementById('hotseat-pass-overlay');
+    if (_hotseatOverlay) _hotseatOverlay.style.display = 'none';
     stopDanceAnimation();
     document.getElementById('hud-bottombar').classList.remove('match-over-active');
     roundBiome = 'city';
@@ -3743,14 +4110,19 @@
 
   // ─── Server status check (lobby detection) ─────────────────────────────────
   function checkServerStatus() {
-    // Only used to surface the clear-host button when a stored session exists
     const clearBtn = document.getElementById('clear-host-btn');
-    clearBtn.style.display = 'none';
-    if (!hasStoredHostSession()) return;
+    const spectateBtn = document.getElementById('spectate-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (spectateBtn) spectateBtn.style.display = 'none';
     fetch('/status')
       .then(r => r.json())
       .then(data => {
-        if (data.active) clearBtn.style.display = 'inline-block';
+        spectatorCount = Math.max(0, Number(data.spectatorCount || 0));
+        maxSpectators = Math.max(0, Number(data.maxSpectators || maxSpectators));
+        if (Array.isArray(data.spectatorNames)) spectatorNames = data.spectatorNames.slice();
+        updateSpectatorUI();
+        if (hasStoredHostSession() && data.active && clearBtn) clearBtn.style.display = 'inline-block';
+        if (data.active && data.joinableAsSpectator && spectateBtn) spectateBtn.style.display = 'inline-block';
       })
       .catch(() => {});
   }
@@ -3772,8 +4144,11 @@
         const visiblePlayers = (Number(data.connectedPlayerCount || data.playerCount || 0) +
           Number(data.reservedPlayerCount || 0));
         if (data.active && visiblePlayers > 0) {
-          // Game found — join immediately
+          spectatorCount = Math.max(0, Number(data.spectatorCount || 0));
+          maxSpectators = Math.max(0, Number(data.maxSpectators || maxSpectators));
+          updateSpectatorUI();
           isJoining = true;
+          pendingJoinRole = data.joinableAsPlayer ? 'player' : 'spectator';
           switchToSetup(true);
         } else {
           lobbyInfo.textContent = 'No active game found. Ask someone to host first!';
@@ -3794,6 +4169,7 @@
   document.getElementById('host-btn').addEventListener('click', () => {
     playUIConfirm();
     isJoining = false;
+    pendingJoinRole = 'player';
     switchToSetup(false);
   });
 
@@ -3801,6 +4177,16 @@
     playUIConfirm();
     searchForGame();
   });
+
+  const spectateBtn = document.getElementById('spectate-btn');
+  if (spectateBtn) {
+    spectateBtn.addEventListener('click', () => {
+      playUIConfirm();
+      isJoining = true;
+      pendingJoinRole = 'spectator';
+      switchToSetup(true);
+    });
+  }
 
   document.getElementById('clear-host-btn').addEventListener('click', () => {
     playUIConfirm();
@@ -3848,12 +4234,19 @@
       };
     }
     startTitleMusic();
+    updateSpectatorUI();
   }
 
   function switchToPlaying() {
     clearPauseMenuState();
     gameState = 'playing';
     shotPending = false;
+    // Reset hot-seat overlay tracking so the first turn of a fresh match
+    // displays the pass overlay (and any stale overlay from a prior match is hidden).
+    hotseatLastShownPlayer = 0;
+    const overlay = document.getElementById('hotseat-pass-overlay');
+    if (overlay) overlay.style.display = 'none';
+    hotseatPassPending = false;
     document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
     document.getElementById('hud').classList.add('active');
     updateHUD();
@@ -3868,6 +4261,7 @@
       }
     }
     startBGMusic();
+    updateSpectatorUI();
     scheduleCanvasResize();
   }
 
@@ -3904,6 +4298,7 @@
     // Hide the input panel on matchOver — only chat is relevant
     document.getElementById('input-panel').style.display = 'none';
     updateMatchOverActions();
+    updateSpectatorUI();
     scheduleCanvasResize();
 
     // Start the dancing monkey canvases (winner = 1-indexed → 0-indexed)
@@ -3917,7 +4312,15 @@
     const turnName = getTurnDisplayName();
     const turnEl = document.getElementById('hud-turn');
     turnEl.classList.remove('my-turn', 'waiting-turn');
-    if (myPlayer === currentPlayer) {
+    const isHotseat = settings.gameMode === 'hotseat';
+    if (isSpectator()) {
+      turnEl.textContent = `WATCHING ${turnName.toUpperCase()}`;
+      turnEl.classList.add('waiting-turn');
+    } else if (isHotseat) {
+      // Hot seat: every gorilla is local. Always frame as "<name>'S TURN".
+      turnEl.textContent = `${turnName.toUpperCase()}'S TURN - FIRE WHEN READY`;
+      turnEl.classList.add('my-turn');
+    } else if (myPlayer === currentPlayer) {
       turnEl.textContent = 'YOUR TURN - FIRE WHEN READY';
       turnEl.classList.add('my-turn');
     } else {
@@ -3963,11 +4366,18 @@
     }
 
     updateInputPanel();
+    updateSpectatorUI();
   }
 
   function updateInputPanel() {
     const panel = document.getElementById('input-panel');
-    const isMyTurn = myPlayer === currentPlayer && gameState === 'playing' && !showBanana && !shotPending;
+    const isSpec = isSpectator();
+    const isHotseat = settings.gameMode === 'hotseat';
+    // In hot seat, the host always controls input — but the pass-controller
+    // overlay must be dismissed first.
+    const hotseatReady = isHotseat && !hotseatPassPending && myPlayer > 0;
+    const standardReady = !isHotseat && myPlayer === currentPlayer;
+    const isMyTurn = !isSpec && (standardReady || hotseatReady) && gameState === 'playing' && !showBanana && !shotPending;
 
     // Always show the panel so the bottom bar always has both sections
     panel.style.display = 'flex';
@@ -3979,9 +4389,18 @@
     const angleInput = document.getElementById('input-angle');
     const velInput = document.getElementById('input-velocity');
     const velocityRange = document.getElementById('ctrl-velocity-range');
+    const ammoSelect = document.getElementById('ammo-select');
+    const ctrlInputs = document.querySelector('.ctrl-inputs');
+    const btnRow = document.querySelector('.ctrl-btn-row');
+    const spectatorPanel = document.getElementById('spectator-panel');
 
     panel.classList.toggle('panel-disabled', !isMyTurn);
-    if (statusEl) statusEl.textContent = isMyTurn ? 'READY TO FIRE' : 'STANDBY';
+    if (statusEl) statusEl.textContent = isSpec ? 'WATCHING' : (isMyTurn ? 'READY TO FIRE' : 'STANDBY');
+
+    if (ammoSelect) ammoSelect.style.display = isSpec ? 'none' : 'grid';
+    if (ctrlInputs) ctrlInputs.style.display = isSpec ? 'none' : 'flex';
+    if (btnRow) btnRow.style.display = isSpec ? 'none' : 'grid';
+    if (spectatorPanel) spectatorPanel.style.display = isSpec ? 'flex' : 'none';
 
     angleInput.disabled = !isMyTurn;
     velInput.disabled = !isMyTurn;
@@ -3998,14 +4417,16 @@
       angleInput.focus();
     }
 
+    updateSpectatorUI();
     scheduleCanvasResize();
   }
 
-  function updateAmmoSelect({ interactive = myPlayer === currentPlayer && gameState === 'playing' && !showBanana && !shotPending } = {}) {
+  function updateAmmoSelect({ interactive = (settings.gameMode === 'hotseat' ? !hotseatPassPending : myPlayer === currentPlayer) && gameState === 'playing' && !showBanana && !shotPending } = {}) {
     const ammoSel = document.getElementById('ammo-select');
     if (!ammoSel) return;
-    const myIdx = myPlayer - 1;
-    const charges = (myIdx >= 0 && myIdx < 4) ? (turretCharges[myIdx] || 0) : 0;
+    // In hot seat, charges are tracked per gorilla (currentPlayer), not per host slot.
+    const idxForCharges = settings.gameMode === 'hotseat' ? (currentPlayer - 1) : (myPlayer - 1);
+    const charges = (idxForCharges >= 0 && idxForCharges < 4) ? (turretCharges[idxForCharges] || 0) : 0;
     const chargeLabel = document.getElementById('turret-charges');
     if (chargeLabel) chargeLabel.textContent = `${charges}`;
     const bananaRadio = document.getElementById('ammo-banana');
@@ -4247,7 +4668,68 @@
     modeSelect.addEventListener('change', () => {
       settings.gameMode = modeSelect.value;
       updateRoundsLabel();
+      updateHotseatFieldsVisibility();
     });
+  }
+
+  // Hot seat: P2 name/color inputs (host-only); changes broadcast via setSettings
+  const player2NameInput = document.getElementById('player2-name');
+  if (player2NameInput) {
+    const syncP2Name = () => {
+      const trimmed = (player2NameInput.value || '').trim().substring(0, 20);
+      settings.player2Name = trimmed || 'Player 2';
+      saveSettings();
+      if (Net.isConnected() && isHostPlayer()) {
+        Net.send({ type: 'setSettings', player2Name: settings.player2Name });
+      }
+    };
+    player2NameInput.addEventListener('input', syncP2Name);
+    player2NameInput.addEventListener('change', syncP2Name);
+  }
+
+  const player2ColorInput = document.getElementById('player2-color');
+  const player2ColorReadout = document.getElementById('player2-color-readout');
+  if (player2ColorInput) {
+    const syncP2Color = () => {
+      const sanitized = sanitizePlayerColor(player2ColorInput.value, settings.player2Color || getDefaultPlayerColor(1));
+      settings.player2Color = sanitized;
+      if (player2ColorReadout) player2ColorReadout.textContent = sanitized;
+      saveSettings();
+      if (Net.isConnected() && isHostPlayer()) {
+        Net.send({ type: 'setSettings', player2Color: sanitized });
+      }
+    };
+    player2ColorInput.addEventListener('input', syncP2Color);
+    player2ColorInput.addEventListener('change', syncP2Color);
+  }
+
+  // Hot seat: Ready button on the pass-controller overlay
+  const hotseatReadyBtn = document.getElementById('hotseat-pass-ready');
+  if (hotseatReadyBtn) {
+    hotseatReadyBtn.addEventListener('click', () => {
+      hideHotseatPassOverlay();
+    });
+  }
+
+  function showHotseatPassOverlay(playerIdx) {
+    const overlay = document.getElementById('hotseat-pass-overlay');
+    const nameEl = document.getElementById('hotseat-pass-name');
+    if (!overlay) return;
+    hotseatPassPending = true;
+    if (nameEl) {
+      nameEl.textContent = playerNames[playerIdx] || `Player ${playerIdx + 1}`;
+      const color = playerColors[playerIdx];
+      if (color) nameEl.style.color = color;
+    }
+    overlay.style.display = 'flex';
+  }
+
+  function hideHotseatPassOverlay() {
+    const overlay = document.getElementById('hotseat-pass-overlay');
+    hotseatPassPending = false;
+    if (overlay) overlay.style.display = 'none';
+    updateInputPanel();
+    updateHUD();
   }
 
   const playerColorInput = document.getElementById('player-color');
@@ -4267,13 +4749,14 @@
   function canAutoReconnect() {
     return !suppressReconnect &&
       !!sessionToken &&
-      myPlayer > 0 &&
+      (myPlayer > 0 || isSpectator()) &&
       gameState !== 'title' &&
       gameState !== 'setup';
   }
 
   function applyRoundSnapshot(msg, { hydrateTransientState = false } = {}) {
     syncHostPlayerFromMessage(msg);
+    syncSpectatorsFromMessage(msg);
     citySeed = msg.citySeed;
     gorillas = msg.gorillas;
     wind = msg.wind;
@@ -4304,6 +4787,11 @@
     for (const k of Object.keys(frustratedTimers)) { clearTimeout(frustratedTimers[k]); delete frustratedTimers[k]; }
     for (const k of Object.keys(boredTimers)) { clearTimeout(boredTimers[k]); delete boredTimers[k]; }
     setSunEmote('idle', 0);
+    sunPersistentEmote = 'idle';
+    goldenGorillaActive = false;
+    goldenGorillaPos = null;
+    goldenGorillaThrowAnim = 0;
+    sunSwearVisible = false;
     roundNumber = msg.roundNumber || 1;
     maxVelocity = msg.maxVelocity || 200;
     activeBananaType = (msg.banana && msg.banana.type) || msg.bananaType || 'standard';
@@ -4464,6 +4952,8 @@
       shakeIntensity: getControlValue(SHAKE_SELECT_IDS, settings.shakeIntensity),
       trailStyle: getControlValue(TRAIL_SELECT_IDS, settings.trailStyle),
       crtOverlay: getControlValue(CRT_SELECT_IDS, String(settings.crtOverlay)) === 'true',
+      player2Name: settings.player2Name,
+      player2Color: settings.player2Color,
     });
   }
 
@@ -4474,7 +4964,7 @@
     reconnectAttempts++;
     reconnectTimer = setTimeout(() => {
       if (!canAutoReconnect()) return;
-      Net.connect(myName, sessionToken, myColor);
+      Net.connect(myName, sessionToken, myColor, clientRole);
     }, 3000);
   }
 
@@ -4492,6 +4982,7 @@
   Net.on('waiting', (msg) => {
     if (typeof msg.player === 'number') myPlayer = msg.player;
     syncHostPlayerFromMessage(msg);
+    syncSpectatorsFromMessage(msg);
     if (gameState !== 'setup') switchToWaiting();
     if (Array.isArray(msg.playerNames) && msg.playerNames.length) {
       playerNames = msg.playerNames.slice();
@@ -4508,8 +4999,11 @@
   });
 
   Net.on('assigned', (msg) => {
+    clientRole = 'player';
+    mySpectatorId = null;
     myPlayer = msg.player;
     syncHostPlayerFromMessage(msg);
+    syncSpectatorsFromMessage(msg);
     if (msg.token) {
       sessionToken = msg.token;
       try { sessionStorage.setItem('mm_token', sessionToken); } catch(e) {}
@@ -4534,6 +5028,41 @@
     updateMatchOverActions();
     updateSetupPresentation(isJoining);
     updatePlayerColorControl();
+    updateSpectatorUI();
+  });
+
+  Net.on('spectatorAssigned', (msg) => {
+    clientRole = 'spectator';
+    pendingJoinRole = 'spectator';
+    myPlayer = 0;
+    mySpectatorId = msg.spectatorId || null;
+    syncHostPlayerFromMessage(msg);
+    syncSpectatorsFromMessage(msg);
+    if (msg.token) {
+      sessionToken = msg.token;
+      try { sessionStorage.setItem('mm_token', sessionToken); } catch(e) {}
+    }
+    if (Array.isArray(msg.playerNames) && msg.playerNames.length) playerNames = msg.playerNames.slice();
+    if (Array.isArray(msg.playerColors) && msg.playerColors.length) {
+      playerColors = msg.playerColors.map((color, idx) => sanitizePlayerColor(color, getDefaultPlayerColor(idx)));
+    }
+    if (Array.isArray(msg.playerTeams)) playerTeams = msg.playerTeams.slice();
+    if (msg.scoreMode) scoreMode = msg.scoreMode;
+    teamScores = Array.isArray(msg.teamScores) ? msg.teamScores.slice() : null;
+    if (typeof msg.name === 'string' && msg.name) {
+      myName = msg.name;
+      setControlValues(PLAYER_NAME_INPUT_IDS, myName);
+    }
+    try {
+      sessionStorage.setItem('mm_player', '0');
+      sessionStorage.setItem('mm_role', 'spectator');
+    } catch (e) {}
+    persistSessionIdentity();
+    document.getElementById('disconnect-screen').classList.remove('active');
+    updateMatchOverActions();
+    updateSetupPresentation(isJoining);
+    updatePlayerColorControl();
+    updateSpectatorUI();
   });
 
   Net.on('roundStart', (msg) => {
@@ -4559,6 +5088,22 @@
     applyStateSync(msg);
   });
 
+  Net.on('spectators', (msg) => {
+    syncSpectatorsFromMessage(msg);
+  });
+
+  Net.on('challengeQueue', (msg) => {
+    syncSpectatorsFromMessage(msg);
+  });
+
+  Net.on('challengeQueued', (msg) => {
+    appendChatMessage('System', `Queued for ${msg.targetName || `Player ${msg.targetPlayer}`}.`, -1);
+  });
+
+  Net.on('challengeResolved', (msg) => {
+    appendChatMessage('System', `${msg.challengerName} takes ${msg.playerName}'s seat.`, -1);
+  });
+
   Net.on('pauseState', (msg) => {
     applyPauseState(msg);
     if (!msg.paused && Number(msg.turnRemainingMs) > 0 && !banana && clusterBananas.length === 0) {
@@ -4569,6 +5114,7 @@
   });
 
   Net.on('turn', (msg) => {
+    const previousPlayer = currentPlayer;
     currentPlayer = msg.currentPlayer;
     shotPending = false;
     showBanana = false;
@@ -4581,11 +5127,20 @@
     panicPlayers.clear();
     resetCinematicZoom();
     turnStartedAt = performance.now();
+    // Restore persistent anger — clears transient emotes (watching, worried, etc.)
+    if (sunPersistentEmote !== 'idle') setSunEmote(sunPersistentEmote, 0);
     // Clear any stale bored reaction when the turn changes
     for (const k of Object.keys(boredTimers)) {
       clearTimeout(boredTimers[k]); delete boredTimers[k];
     }
     updateHUD();
+
+    // Hot seat: when control passes between local players, hide inputs behind
+    // a pass-the-controller overlay so the next player can't see prior angle/velocity.
+    if (settings.gameMode === 'hotseat' && currentPlayer !== hotseatLastShownPlayer && currentPlayer >= 1) {
+      hotseatLastShownPlayer = currentPlayer;
+      showHotseatPassOverlay(currentPlayer - 1);
+    }
 
     // Flash the turn indicator when it becomes your turn
     if (myPlayer === currentPlayer) {
@@ -4617,12 +5172,45 @@
     }
   });
 
+  Net.on('goldenGorillaSpawn', (msg) => {
+    goldenGorillaActive = true;
+    goldenGorillaPos = { x: msg.x, y: msg.y };
+    goldenGorillaThrowAnim = 0;
+    goldenGorillaSpawnTime = performance.now();
+    sunSwearVisible = false;
+    setSunEmote('idle', 0);
+    startShake();
+    Lighting.triggerExplosionFlash(false);
+  });
+
+  Net.on('goldenGorillaDespawn', () => {
+    goldenGorillaActive = false;
+    goldenGorillaPos = null;
+    goldenGorillaThrowAnim = 0;
+  });
+
+  Net.on('goldenGorillaAttacking', () => {
+    // GG is winding up — nothing visual needed beyond throwAnim per banana
+  });
+
   Net.on('throwAnim', (msg) => {
     if (msg.bananaType) activeBananaType = msg.bananaType;
     stopTurnTimerDisplay();
 
     if (msg.isSunAttack) {
-      // Sun throws the banana — no gorilla animation, keep attacking emote
+      if (msg.isGoldenGorilla && goldenGorillaActive) {
+        // Animate the golden gorilla throwing
+        const side = msg.goldenGorillaThrowSide || 1;
+        goldenGorillaThrowAnim = side > 0 ? 2 : 1;
+        playThrowSound();
+        // Swear bubble — same angry symbols as the sun gets
+        setSunEmote('attacking');
+        if (goldenGorillaThrowTimer) clearTimeout(goldenGorillaThrowTimer);
+        goldenGorillaThrowTimer = setTimeout(() => {
+          goldenGorillaThrowAnim = 0;
+          goldenGorillaThrowTimer = null;
+        }, 500);
+      }
       return;
     }
 
@@ -5025,6 +5613,7 @@
 
   Net.on('matchOver', (msg) => {
     syncHostPlayerFromMessage(msg);
+    syncSpectatorsFromMessage(msg);
     stopVictorySound();
     stopTurnTimerDisplay();
     stopBGMusic();
@@ -5051,7 +5640,8 @@
     stopBGMusic();
     stopVictoryMusic();
     stopWeatherAudio();
-    switchToSetup(false);
+    if (isSpectator()) switchToWaiting();
+    else switchToSetup(false);
   });
 
   Net.on('effectEvent', (msg) => {
@@ -5066,15 +5656,15 @@
   });
 
   Net.on('opponentDisconnected', (msg) => {
-    if (gameState === 'playing' || gameState === 'paused') {
+    if (!isSpectator() && (gameState === 'playing' || gameState === 'paused')) {
       const name = typeof msg?.playerName === 'string' && msg.playerName ? msg.playerName : 'A player';
-      setDisconnectCopy(`${name} disconnected. Waiting 60 seconds for reconnect...`);
+      setDisconnectCopy(`${name} disconnected. Waiting 15 seconds for reconnect...`);
       document.getElementById('disconnect-screen').classList.add('active');
     }
   });
 
   Net.on('opponentReconnected', () => {
-    setDisconnectCopy('Waiting 60 seconds for reconnect...');
+    setDisconnectCopy('Waiting 15 seconds for reconnect...');
     document.getElementById('disconnect-screen').classList.remove('active');
   });
 
@@ -5155,6 +5745,13 @@
     onChange: () => {
       saveSettings();
       applySfxVolumeSetting();
+    },
+  });
+
+  bindMirroredValueControls(SPECTATOR_CHAT_MUTE_IDS, {
+    onChange: () => {
+      syncSetupSelectionsToState();
+      saveSettings();
     },
   });
 
@@ -5292,16 +5889,22 @@
   Net.on('chat', (msg) => {
     const from = typeof msg.from === 'string' ? msg.from : '';
     const text = typeof msg.text === 'string' ? msg.text : '';
+    const role = msg.role === 'spectator' ? 'spectator' : 'player';
     if (!from || !text) return;
+    if (role === 'spectator' && getControlValue(SPECTATOR_CHAT_MUTE_IDS, 'false') === 'true') return;
     // Use playerNames to pick the colour class; fall back to -1 (system style)
-    const idx = playerNames.indexOf(from);
-    appendChatMessage(from, text, idx);
+    const idx = typeof msg.player === 'number' && msg.player > 0 ? msg.player - 1 : playerNames.indexOf(from);
+    appendChatMessage(from, text, idx, role);
   });
 
   // ─── Fire shot helper ──────────────────────────────────────────────────────
   function fireShot() {
+    if (isSpectator()) return;
     if (gameState !== 'playing') return;
-    if (myPlayer !== currentPlayer) return;
+    // In hot seat, the host fires for whichever local player's turn it is.
+    const isHotseat = settings.gameMode === 'hotseat';
+    if (!isHotseat && myPlayer !== currentPlayer) return;
+    if (isHotseat && hotseatPassPending) return;
     if (showBanana) return;
     if (shotPending) return;
     const angle = Math.max(0, Math.min(180, parseInt(document.getElementById('input-angle').value) || 0));
@@ -5734,8 +6337,9 @@
               switchToWaiting();
             }
           } else {
+            clientRole = pendingJoinRole;
             persistSessionIdentity();
-            Net.connect(myName, sessionToken, myColor);
+            Net.connect(myName, sessionToken, myColor, pendingJoinRole);
           }
         }
         break;

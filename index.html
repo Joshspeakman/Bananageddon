@@ -23,6 +23,7 @@
       <div class="title-buttons">
         <button id="host-btn" class="title-btn host-btn">HOST GAME</button>
         <button id="join-btn" class="title-btn join-btn">SEARCH FOR GAME <span id="join-spinner" class="join-spinner" style="display:none;">…</span></button>
+        <button id="spectate-btn" class="title-btn spectate-btn" style="display:none;">SPECTATE GAME</button>
       </div>
       <div class="title-audio-panel">
         <div class="title-audio-kicker">AUDIO</div>
@@ -62,6 +63,22 @@
           </div>
         </div>
 
+        <!-- Hot Seat: second local player’s identity (host-only, shown when gameMode === 'hotseat') -->
+        <div id="hotseat-player2-fields" class="hotseat-player2-fields" style="display:none;">
+          <div class="hotseat-player2-kicker">PLAYER 2 (LOCAL)</div>
+          <div class="setup-field">
+            <label for="player2-name">Player 2 Name:</label>
+            <input type="text" id="player2-name" maxlength="20" value="Player 2" autocomplete="off">
+          </div>
+          <div class="setup-field setup-field-color">
+            <label for="player2-color">Player 2 Color:</label>
+            <div class="setup-color-control">
+              <input type="color" id="player2-color" value="#FF8A4C" aria-label="Pick Player 2 color">
+              <span id="player2-color-readout" class="setup-color-readout">#FF8A4C</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Host-only settings (hidden for joiners) -->
         <div id="setup-host-settings">
 
@@ -86,6 +103,7 @@
               <option value="koth">King of the Hill</option>
               <option value="gauntlet">Gauntlet</option>
               <option value="chaos">Chaos</option>
+              <option value="hotseat">Hot Seat (2P Local)</option>
               <option value="team">Team (4P)</option>
             </select>
           </div>
@@ -268,6 +286,13 @@
               <option value="3">Insane</option>
             </select>
           </div>
+          <div class="setup-field">
+            <label for="spectator-chat-select">Spectator Chat:</label>
+            <select id="spectator-chat-select">
+              <option value="false" selected>Show</option>
+              <option value="true">Mute</option>
+            </select>
+          </div>
         </div>
 
         <div class="setup-actions">
@@ -307,6 +332,8 @@
           <span class="hud-sep">|</span>
           <div id="hud-info" class="hud-info" style="display:none;"></div>
           <span class="hud-sep">|</span>
+          <div id="hud-spectators" class="hud-info">SPEC 0/8</div>
+          <span class="hud-sep">|</span>
           <div id="hud-music" class="hud-music">&#9834; ON [M]</div>
           <button id="hud-prev-track" class="hud-track-btn" title="Previous track">&#9664;</button>
           <button id="hud-next-track" class="hud-track-btn" title="Next track">&#9654;</button>
@@ -319,6 +346,17 @@
 
       <!-- Windshear banner -->
       <div id="windshear-banner" class="windshear-banner" style="display:none;">⚠ WINDSHEAR: Wind reverses at arc peak!</div>
+
+      <!-- Hot seat: pass-the-controller overlay between turns -->
+      <div id="hotseat-pass-overlay" class="hotseat-pass-overlay" style="display:none;" role="dialog" aria-label="Pass the controller">
+        <div class="hotseat-pass-box">
+          <div class="hotseat-pass-kicker">HOT SEAT</div>
+          <div class="hotseat-pass-title">PASS THE CONTROLLER</div>
+          <div id="hotseat-pass-name" class="hotseat-pass-name">Player 2</div>
+          <div class="hotseat-pass-sub">is up next</div>
+          <button id="hotseat-pass-ready" class="hotseat-pass-ready">READY</button>
+        </div>
+      </div>
 
       <!-- Keyboard help overlay ([?] key) -->
       <div id="keys-overlay" class="keys-overlay" style="display:none;" role="dialog" aria-label="Keyboard shortcuts">
@@ -395,6 +433,12 @@
             <button id="taunt-btn" class="taunt-btn">TAUNT</button>
             <button id="picnic-btn" class="picnic-btn">PICNIC</button>
           </div>
+          <div id="spectator-panel" class="spectator-panel" style="display:none;">
+            <div class="spectator-panel-head">SPECTATOR QUEUE</div>
+            <div id="spectator-panel-copy" class="spectator-panel-copy">Challenge a player to claim the next open seat.</div>
+            <div id="spectator-challenge-buttons" class="spectator-challenge-buttons"></div>
+            <div id="challenge-queue-list" class="challenge-queue-list"></div>
+          </div>
         </div>
 
       </div>
@@ -414,6 +458,7 @@
             <button id="new-match-btn" class="match-action-btn">NEW MATCH (N)</button>
             <button id="title-return-btn" class="match-action-btn">TITLE (Esc)</button>
           </div>
+          <div id="match-challenge-panel" class="match-challenge-panel"></div>
           <div class="match-over-hint">Press R for rematch &bull; N for new match &bull; Esc for title</div>
         </div>
         <canvas id="monkey-canvas-right" class="monkey-dance-canvas" width="110" height="200"></canvas>
@@ -492,6 +537,13 @@
               <input id="pause-sfx-volume" type="range" min="0" max="100" step="5" value="100">
               <span id="pause-sfx-volume-readout" class="pause-readout">100%</span>
             </div>
+            <div class="pause-field">
+              <label for="pause-spectator-chat-select">Spectator Chat</label>
+              <select id="pause-spectator-chat-select">
+                <option value="false" selected>Show</option>
+                <option value="true">Mute</option>
+              </select>
+            </div>
           </div>
 
           <div class="pause-section pause-section-profile">
@@ -517,7 +569,7 @@
     <div id="disconnect-screen" class="screen">
       <div class="disconnect-box">
         <h2>PLAYER DISCONNECTED</h2>
-        <div id="disconnect-copy">Waiting 60 seconds for reconnect...</div>
+        <div id="disconnect-copy">Waiting 15 seconds for reconnect...</div>
       </div>
     </div>
 

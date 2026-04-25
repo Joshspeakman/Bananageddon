@@ -107,17 +107,18 @@ async function withServer(run, options = {}) {
 }
 
 class Client {
-  constructor(port, name, token) {
+  constructor(port, name, token, role = 'player') {
     this.port = port;
     this.name = name;
     this.token = token;
+    this.role = role;
     this.messages = [];
     this.waiters = [];
     this.ws = null;
   }
 
-  static async connect(port, name, token) {
-    const client = new Client(port, name, token);
+  static async connect(port, name, token, role = 'player') {
+    const client = new Client(port, name, token, role);
     await client.connect();
     return client;
   }
@@ -128,7 +129,7 @@ class Client {
       this.ws = ws;
 
       const onOpen = () => {
-        const joinMsg = { type: 'join', name: this.name };
+        const joinMsg = { type: 'join', name: this.name, role: this.role };
         if (this.token) joinMsg.token = this.token;
         ws.send(JSON.stringify(joinMsg));
         resolve();
@@ -253,6 +254,9 @@ async function testStatusAndSharedRoute() {
     assert.strictEqual(parsed.state, 'waiting');
     assert.strictEqual(parsed.gameMode, 'classic');
     assert.strictEqual(parsed.mapSize, 'normal');
+    assert.strictEqual(parsed.spectatorCount, 0);
+    assert.strictEqual(parsed.maxSpectators, 8);
+    assert.strictEqual(parsed.joinableAsSpectator, true);
 
     const shared = await httpRequest(port, '/shared.js');
     assert.strictEqual(shared.statusCode, 200);
@@ -399,14 +403,154 @@ async function testRejectJoinWhilePlaying() {
   });
 }
 
-async function testGuestCannotClearMatch() {
+async function testSpectatorCanJoinActiveMatchAndChat() {
   await withServer(async ({ port }) => {
-    const host = await Client.connect(port, 'Host');
-    const guest = await Client.connect(port, 'Guest');
+    const host = await Client.connect(port, 'Host Solo');
+    let spectator = null;
 
     try {
       await host.waitForType('waiting');
+      const marker = host.messages.length;
+      host.send({ type: 'setSettings', gameMode: 'targetpractice' });
+      await host.waitFor(
+        msg => msg.type === 'roundStart' && msg.mode === 'targetpractice',
+        { fromIndex: marker, description: 'solo roundStart before spectator join' }
+      );
+
+      spectator = await Client.connect(port, 'Watcher', null, 'spectator');
+      const assigned = await spectator.waitForType('spectatorAssigned');
+      const stateSync = await spectator.waitFor(
+        msg => msg.type === 'stateSync' && msg.state === 'playing',
+        { description: 'spectator playing stateSync' }
+      );
+
+      assert.strictEqual(assigned.role, 'spectator');
+      assert.strictEqual(stateSync.spectatorCount, 1);
+
+      const hostMarker = host.messages.length;
+      const specMarker = spectator.messages.length;
+      spectator.send({ type: 'chat', text: 'hello bench' });
+
+      const [hostChat, specChat] = await Promise.all([
+        host.waitFor(
+          msg => msg.type === 'chat' && msg.from === 'Watcher',
+          { fromIndex: hostMarker, description: 'host receives spectator chat' }
+        ),
+        spectator.waitFor(
+          msg => msg.type === 'chat' && msg.from === 'Watcher',
+          { fromIndex: specMarker, description: 'spectator receives own chat' }
+        ),
+      ]);
+
+      assert.strictEqual(hostChat.role, 'spectator');
+      assert.strictEqual(specChat.text, 'hello bench');
+
+      const noThrowMarker = host.messages.length;
+      spectator.send({ type: 'fire', angle: 45, velocity: 80 });
+      await host.expectNo(
+        msg => msg.type === 'throwAnim',
+        { fromIndex: noThrowMarker, timeout: 800, description: 'spectator fire should not launch' }
+      );
+    } finally {
+      await Promise.all([host.close(), spectator ? spectator.close() : Promise.resolve()]);
+    }
+  });
+}
+
+async function testSpectatorCapIsEight() {
+  await withServer(async ({ port }) => {
+    const host = await Client.connect(port, 'Host');
+    const spectators = [];
+
+    try {
+      await host.waitForType('waiting');
+      for (let i = 1; i <= 8; i++) {
+        const spec = await Client.connect(port, `Spec ${i}`, null, 'spectator');
+        spectators.push(spec);
+        const assigned = await spec.waitForType('spectatorAssigned');
+        assert.strictEqual(assigned.role, 'spectator');
+      }
+
+      const overflow = await Client.connect(port, 'Spec 9', null, 'spectator');
+      spectators.push(overflow);
+      const error = await overflow.waitFor(
+        msg => msg.type === 'error' && /spectator seats are full/i.test(msg.message),
+        { description: 'spectator cap rejection' }
+      );
+      assert.match(error.message, /spectator seats are full/i);
+
+      const status = await httpRequest(port, '/status');
+      const parsed = JSON.parse(status.body);
+      assert.strictEqual(parsed.spectatorCount, 8);
+      assert.strictEqual(parsed.joinableAsSpectator, false);
+    } finally {
+      await Promise.all([host.close(), ...spectators.map(client => client.close())]);
+    }
+  });
+}
+
+async function testQueuedChallengeClaimsDisconnectedSeat() {
+  await withServer(async ({ port }) => {
+    const host = await Client.connect(port, 'Host');
+    const guest = await Client.connect(port, 'Guest');
+    let spectator = null;
+
+    try {
+      await Promise.all([
+        host.waitFor(msg => msg.type === 'roundStart' && msg.mode === 'classic', { description: 'host roundStart before challenge' }),
+        guest.waitFor(msg => msg.type === 'roundStart' && msg.mode === 'classic', { description: 'guest roundStart before challenge' }),
+      ]);
+
+      spectator = await Client.connect(port, 'Challenger', null, 'spectator');
+      await spectator.waitForType('spectatorAssigned');
+      const queueMarker = spectator.messages.length;
+      spectator.send({ type: 'challengePlayer', targetPlayer: 1 });
+      await spectator.waitFor(
+        msg => msg.type === 'challengeQueue' && msg.challengeQueue?.some(entry => entry.spectatorName === 'Challenger' && entry.targetPlayer === 1),
+        { fromIndex: queueMarker, description: 'challenge queue broadcast' }
+      );
+
+      const assignedMarker = spectator.messages.length;
+      const guestMarker = guest.messages.length;
+      await host.close();
+
+      const promoted = await spectator.waitFor(
+        msg => msg.type === 'assigned' && msg.player === 1,
+        { fromIndex: assignedMarker, timeout: 2500, description: 'challenger promoted after timeout' }
+      );
+      const waiting = await guest.waitFor(
+        msg => msg.type === 'waiting' && msg.hostPlayer === 1,
+        { fromIndex: guestMarker, timeout: 2500, description: 'guest sees promoted host waiting state' }
+      );
+
+      assert.strictEqual(promoted.role, 'player');
+      assert.strictEqual(waiting.hostPlayer, 1);
+    } finally {
+      await Promise.all([
+        host.close(),
+        guest.close(),
+        spectator ? spectator.close() : Promise.resolve(),
+      ]);
+    }
+  }, { env: { DISCONNECT_TIMEOUT_MS: '250' } });
+}
+
+async function testGuestCannotClearMatch() {
+  await withServer(async ({ port }) => {
+    const host = await Client.connect(port, 'Host');
+    let guest = null;
+
+    try {
+      await host.waitForType('waiting');
+      const settingsMarker = host.messages.length;
       host.send({ type: 'setSettings', gameMode: 'team' });
+      await host.waitFor(
+        msg => msg.type === 'settingsSync' && msg.settings && msg.settings.gameMode === 'team',
+        { fromIndex: settingsMarker, description: 'host team settings before guest clear test' }
+      );
+
+      guest = await Client.connect(port, 'Guest');
+      await guest.waitForType('assigned');
       await guest.waitFor(
         msg => msg.type === 'waiting' && msg.mode === 'team',
         { description: 'guest team waiting state' }
@@ -427,7 +571,7 @@ async function testGuestCannotClearMatch() {
         { fromIndex: hostMarker, timeout: 800, description: 'unexpected matchCleared broadcast' }
       );
     } finally {
-      await Promise.all([host.close(), guest.close()]);
+      await Promise.all([host.close(), guest ? guest.close() : Promise.resolve()]);
     }
   });
 }
@@ -718,6 +862,9 @@ const TESTS = [
   ['team mode starts with four players', testTeamModeStartsWithFourPlayers],
   ['over-capacity lobby is blocked', testLobbyOverCapacityBlocksStart],
   ['late join is rejected while playing', testRejectJoinWhilePlaying],
+  ['spectator can join active match and chat', testSpectatorCanJoinActiveMatchAndChat],
+  ['spectator cap is eight', testSpectatorCapIsEight],
+  ['queued challenge claims disconnected seat', testQueuedChallengeClaimsDisconnectedSeat],
   ['guest cannot clear the match', testGuestCannotClearMatch],
   ['waiting reconnect keeps reserved slot', testWaitingReconnectKeepsReservedSlot],
   ['host promotion after timeout', testHostPromotionAfterTimeout],

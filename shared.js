@@ -89,6 +89,15 @@
       soloTurn: false,
       targetCount: 0,
     },
+    hotseat: {
+      label: 'Hot Seat (2P Local)',
+      requiredPlayers: 1,
+      supportedPlayers: 1,
+      controlledPlayers: 2,
+      scoreMode: 'individual',
+      soloTurn: false,
+      targetCount: 0,
+    },
     team: {
       label: 'Team',
       requiredPlayers: 4,
@@ -117,6 +126,9 @@
     shakeIntensity: 'normal',
     trailStyle: 'dotted',
     crtOverlay: true,
+    // Hot seat — name/color of the second local player (only used when gameMode === 'hotseat').
+    player2Name: 'Player 2',
+    player2Color: '#FF8A4C',
   };
 
   const PLAYER_COLOR_DEFAULTS = ['#9D52FF', '#FF8A4C', '#55E9FF', '#A6FF55'];
