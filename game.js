@@ -3817,7 +3817,7 @@
     const modeSelect = document.getElementById('gamemode-select');
     const mode = modeSelect ? modeSelect.value : settings.gameMode;
     const canEdit = !Net.isConnected() || isHostPlayer();
-    fields.style.display = (mode === 'hotseat' && canEdit) ? '' : 'none';
+    fields.style.display = ((mode === 'hotseat' || mode === 'coop') && canEdit) ? '' : 'none';
   }
 
   function updateSetupPresentation(joining) {
@@ -4069,6 +4069,8 @@
     hotseatPlayerInputs = [null, null, null, null];
     const _hotseatOverlay = document.getElementById('hotseat-pass-overlay');
     if (_hotseatOverlay) _hotseatOverlay.style.display = 'none';
+    const _cpuBanner = document.getElementById('cpu-thinking-banner');
+    if (_cpuBanner) _cpuBanner.style.display = 'none';
     stopDanceAnimation();
     document.getElementById('hud-bottombar').classList.remove('match-over-active');
     roundBiome = 'city';
@@ -4251,6 +4253,8 @@
     hotseatLastShownPlayer = 0;
     const overlay = document.getElementById('hotseat-pass-overlay');
     if (overlay) overlay.style.display = 'none';
+    const cpuBanner = document.getElementById('cpu-thinking-banner');
+    if (cpuBanner) cpuBanner.style.display = 'none';
     hotseatPassPending = false;
     hotseatPlayerInputs = [null, null, null, null];
     document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
@@ -4319,11 +4323,16 @@
     const turnEl = document.getElementById('hud-turn');
     turnEl.classList.remove('my-turn', 'waiting-turn');
     const isHotseat = settings.gameMode === 'hotseat';
+    const isCoop = settings.gameMode === 'coop';
+    const isCpuTurn = isCoop && currentPlayer >= 3;
     if (isSpectator()) {
       turnEl.textContent = `WATCHING ${turnName.toUpperCase()}`;
       turnEl.classList.add('waiting-turn');
-    } else if (isHotseat) {
-      // Hot seat: every gorilla is local. Always frame as "<name>'S TURN".
+    } else if (isCpuTurn) {
+      turnEl.textContent = `${turnName.toUpperCase()} IS AIMING...`;
+      turnEl.classList.add('waiting-turn');
+    } else if (isHotseat || isCoop) {
+      // Hot seat / co-op human turn: frame as "<name>'S TURN".
       turnEl.textContent = `${turnName.toUpperCase()}'S TURN - FIRE WHEN READY`;
       turnEl.classList.add('my-turn');
     } else if (myPlayer === currentPlayer) {
@@ -4379,11 +4388,15 @@
     const panel = document.getElementById('input-panel');
     const isSpec = isSpectator();
     const isHotseat = settings.gameMode === 'hotseat';
+    const isCoop = settings.gameMode === 'coop';
     // In hot seat, the host always controls input — but the pass-controller
     // overlay must be dismissed first.
     const hotseatReady = isHotseat && !hotseatPassPending && myPlayer > 0;
-    const standardReady = !isHotseat && myPlayer === currentPlayer;
-    const isMyTurn = !isSpec && (standardReady || hotseatReady) && gameState === 'playing' && !showBanana && !shotPending;
+    // In co-op, the host controls slots 1 & 2 (humans). CPUs (3 & 4) shoot
+    // automatically; lock input on those turns.
+    const coopHumanReady = isCoop && !hotseatPassPending && myPlayer > 0 && currentPlayer >= 1 && currentPlayer <= 2;
+    const standardReady = !isHotseat && !isCoop && myPlayer === currentPlayer;
+    const isMyTurn = !isSpec && (standardReady || hotseatReady || coopHumanReady) && gameState === 'playing' && !showBanana && !shotPending;
 
     // Always show the panel so the bottom bar always has both sections
     panel.style.display = 'flex';
@@ -4427,11 +4440,12 @@
     scheduleCanvasResize();
   }
 
-  function updateAmmoSelect({ interactive = (settings.gameMode === 'hotseat' ? !hotseatPassPending : myPlayer === currentPlayer) && gameState === 'playing' && !showBanana && !shotPending } = {}) {
+  function updateAmmoSelect({ interactive = ((settings.gameMode === 'hotseat' || (settings.gameMode === 'coop' && currentPlayer >= 1 && currentPlayer <= 2)) ? !hotseatPassPending : myPlayer === currentPlayer) && gameState === 'playing' && !showBanana && !shotPending } = {}) {
     const ammoSel = document.getElementById('ammo-select');
     if (!ammoSel) return;
-    // In hot seat, charges are tracked per gorilla (currentPlayer), not per host slot.
-    const idxForCharges = settings.gameMode === 'hotseat' ? (currentPlayer - 1) : (myPlayer - 1);
+    // In hot seat / co-op, charges are tracked per gorilla (currentPlayer), not per host slot.
+    const isLocalControl = settings.gameMode === 'hotseat' || settings.gameMode === 'coop';
+    const idxForCharges = isLocalControl ? (currentPlayer - 1) : (myPlayer - 1);
     const charges = (idxForCharges >= 0 && idxForCharges < 4) ? (turretCharges[idxForCharges] || 0) : 0;
     const chargeLabel = document.getElementById('turret-charges');
     if (chargeLabel) chargeLabel.textContent = `${charges}`;
@@ -5156,11 +5170,16 @@
     }
     updateHUD();
 
-    // Hot seat: when control passes between local players, hide inputs behind
-    // a pass-the-controller overlay so the next player can't see prior angle/velocity.
-    // Lock input immediately, but defer the visual overlay so the previous
-    // shot's result (explosion, score popup) is visible first.
-    if (settings.gameMode === 'hotseat' && currentPlayer !== hotseatLastShownPlayer && currentPlayer >= 1) {
+    // Hot seat / co-op: when control passes between LOCAL HUMAN players,
+    // hide inputs behind a pass-the-keyboard overlay so the next player
+    // can't see prior angle/velocity. Lock input immediately, but defer the
+    // visual overlay so the previous shot's result is visible first.
+    const isHotseatMode = settings.gameMode === 'hotseat';
+    const isCoopMode = settings.gameMode === 'coop';
+    const passOverlayCandidate =
+      (isHotseatMode && currentPlayer >= 1) ||
+      (isCoopMode && currentPlayer >= 1 && currentPlayer <= 2 && previousPlayer >= 1 && previousPlayer <= 2);
+    if (passOverlayCandidate && currentPlayer !== hotseatLastShownPlayer) {
       const nextPlayer = currentPlayer;
       hotseatLastShownPlayer = nextPlayer;
       const isFirstTurnOfMatch = previousPlayer === 0 || previousPlayer === nextPlayer;
@@ -5174,6 +5193,25 @@
         if (currentPlayer !== nextPlayer) return;
         showHotseatPassOverlay(nextPlayer - 1);
       }, overlayDelay);
+    }
+    // Co-op: track human shown so we re-prompt the keyboard handover next time.
+    if (isCoopMode && currentPlayer >= 3) {
+      // Going to a CPU turn — make sure any pending human overlay is gone so
+      // the player can watch the AI shot.
+      const passOverlay = document.getElementById('hotseat-pass-overlay');
+      if (passOverlay) passOverlay.style.display = 'none';
+      hotseatPassPending = false;
+    }
+    // Co-op: CPU "thinking" indicator.
+    const cpuBanner = document.getElementById('cpu-thinking-banner');
+    const cpuName = document.getElementById('cpu-thinking-name');
+    if (cpuBanner) {
+      if (isCoopMode && currentPlayer >= 3) {
+        if (cpuName) cpuName.textContent = (playerNames[currentPlayer - 1] || `CPU ${currentPlayer - 2}`).toUpperCase();
+        cpuBanner.style.display = 'block';
+      } else {
+        cpuBanner.style.display = 'none';
+      }
     }
 
     // Flash the turn indicator when it becomes your turn
@@ -5935,18 +5973,21 @@
   function fireShot() {
     if (isSpectator()) return;
     if (gameState !== 'playing') return;
-    // In hot seat, the host fires for whichever local player's turn it is.
+    // In hot seat / co-op, the host fires for whichever local human's turn it is.
     const isHotseat = settings.gameMode === 'hotseat';
-    if (!isHotseat && myPlayer !== currentPlayer) return;
-    if (isHotseat && hotseatPassPending) return;
+    const isCoop = settings.gameMode === 'coop';
+    const isLocalControl = isHotseat || isCoop;
+    if (isCoop && (currentPlayer < 1 || currentPlayer > 2)) return;   // CPU turn
+    if (!isLocalControl && myPlayer !== currentPlayer) return;
+    if (isLocalControl && hotseatPassPending) return;
     if (showBanana) return;
     if (shotPending) return;
     const angle = Math.max(0, Math.min(180, parseInt(document.getElementById('input-angle').value) || 0));
     const velocity = Math.max(0, Math.min(maxVelocity, parseInt(document.getElementById('input-velocity').value) || 0));
     const turretRadio = document.getElementById('ammo-turret');
     const ammoType = (turretRadio && turretRadio.checked && !turretRadio.disabled) ? 'turret' : 'banana';
-    // Hot seat: remember this player's settings so they reappear on their next turn.
-    if (isHotseat) {
+    // Hot seat / co-op: remember this player's settings so they reappear on their next turn.
+    if (isLocalControl) {
       const slot = currentPlayer - 1;
       if (slot >= 0 && slot < hotseatPlayerInputs.length) {
         hotseatPlayerInputs[slot] = { angle, velocity, ammoType };

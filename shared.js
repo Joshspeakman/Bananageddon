@@ -98,6 +98,15 @@
       soloTurn: false,
       targetCount: 0,
     },
+    coop: {
+      label: 'Co-op vs CPU (2P Local)',
+      requiredPlayers: 1,
+      supportedPlayers: 1,
+      controlledPlayers: 2,   // 2 humans on the host (hot-seat style)
+      scoreMode: 'team',
+      soloTurn: false,
+      targetCount: 0,
+    },
     team: {
       label: 'Team',
       requiredPlayers: 4,

@@ -104,6 +104,7 @@
               <option value="gauntlet">Gauntlet</option>
               <option value="chaos">Chaos</option>
               <option value="hotseat">Hot Seat (2P Local)</option>
+              <option value="coop">Co-op vs CPU (2P Local)</option>
               <option value="team">Team (4P)</option>
             </select>
           </div>
@@ -356,6 +357,11 @@
           <div class="hotseat-pass-sub">is up next</div>
           <button id="hotseat-pass-ready" class="hotseat-pass-ready">READY</button>
         </div>
+      </div>
+
+      <!-- Co-op: CPU "thinking" indicator -->
+      <div id="cpu-thinking-banner" class="cpu-thinking-banner" style="display:none;" aria-live="polite">
+        <span id="cpu-thinking-name">CPU 1</span> is aiming<span class="cpu-thinking-dots">...</span>
       </div>
 
       <!-- Keyboard help overlay ([?] key) -->

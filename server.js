@@ -150,6 +150,142 @@ function placeGorillas(buildings, rng, gorillaCount = 2) {
   return chosen.map(idx => pos(buildings[idx]));
 }
 
+// Co-op vs CPU: humans (slots 0,1) clustered on the LEFT half of the map,
+// CPUs (slots 2,3) clustered on the RIGHT half. This keeps allies adjacent
+// without crowding them onto a single rooftop.
+function placeCoopGorillas(buildings, rng) {
+  const GORILLA_W = 28;
+  const GORILLA_H = 28;
+  const total = buildings.length;
+  if (total === 0) return [];
+
+  function pos(b) {
+    return {
+      x: Math.floor(b.x + b.w / 2 - GORILLA_W / 2),
+      y: b.y - GORILLA_H,
+    };
+  }
+
+  // Pick an index inside [lo, hi] with a small jitter from rng.
+  function pickIn(lo, hi, jitterMag = 1) {
+    const span = Math.max(0, hi - lo);
+    const center = lo + Math.floor(span / 2);
+    const jitter = Math.floor((rng() - 0.5) * 2 * (jitterMag + 1));
+    return Math.max(0, Math.min(total - 1, center + jitter));
+  }
+
+  // Split building list roughly in half — humans take the left third/quarter,
+  // CPUs take the right third/quarter, leaving a buffer in the middle.
+  const leftHi = Math.max(0, Math.floor(total * 0.35));
+  const leftLoInner = Math.max(0, Math.floor(total * 0.10));
+  const rightLo = Math.min(total - 1, Math.floor(total * 0.65));
+  const rightHiInner = Math.min(total - 1, Math.floor(total * 0.90));
+
+  const p1 = pickIn(leftLoInner, Math.max(leftLoInner, Math.floor(leftHi * 0.5)), 1);
+  let p2 = pickIn(Math.min(total - 1, p1 + 1), leftHi, 1);
+  if (p2 === p1) p2 = Math.min(total - 1, p1 + 1);
+
+  const c1 = pickIn(rightLo, Math.min(rightHiInner, Math.floor((rightLo + rightHiInner) / 2)), 1);
+  let c2 = pickIn(Math.min(total - 1, c1 + 1), rightHiInner, 1);
+  if (c2 === c1) c2 = Math.min(total - 1, c1 + 1);
+
+  return [pos(buildings[p1]), pos(buildings[p2]), pos(buildings[c1]), pos(buildings[c2])];
+}
+
+// ─── CPU AI (co-op mode) ─────────────────────────────────────────────────────
+// Picks a target (one of the two human gorillas) and computes an angle/velocity
+// to land near it using projectile motion. "Medium" difficulty adds random
+// jitter so it occasionally misses.
+function pickCpuShot(cpuIdx) {
+  const shooter = match.gorillas[cpuIdx];
+  if (!shooter) return null;
+  const targets = [match.gorillas[0], match.gorillas[1]].filter(Boolean);
+  if (!targets.length) return null;
+  const target = targets[Math.floor(Math.random() * targets.length)];
+
+  const sx = shooter.x + GORILLA_W / 2;
+  const sy = shooter.y - 4;
+  const tx = target.x + GORILLA_W / 2;
+  const ty = target.y + GORILLA_H / 2;
+
+  const dx = tx - sx;
+  const dy = ty - sy;
+  const horiz = Math.abs(dx) || 1;
+
+  const gravity = BASE_GRAVITY * (Number(match.settings.gravityMultiplier) || 1);
+  const wind = Number(match.wind) || 0;
+
+  // Choose a flight time appropriate to the horizontal distance, then solve
+  // for the launch velocity that lands at the target at that time:
+  //   x: dx = (vxWorld + wind) * t      → vxWorld = dx/t - wind
+  //   y (screen, down=+): dy = vyScreen*t + 0.5*g*t^2
+  //                       → vyScreen = dy/t - 0.5*g*t
+  //   server uses vyScreen = -velocity*sin(angleRad), so define vyUp = -vyScreen
+  //                       → vyUp = 0.5*g*t - dy/t
+  const t = Math.max(1.2, Math.min(3.5, horiz / 120 + 1.4));
+  let vx = dx / t - wind;
+  let vyUp = 0.5 * gravity * t - dy / t; // = 0.5*g*t - dy/t
+
+  // Speed magnitude.
+  const speed = Math.hypot(vx, vyUp);
+  if (!isFinite(speed) || speed <= 0) return null;
+
+  const side = getThrowSide(cpuIdx);   // -1 = facing right (left side of map), 1 = facing left
+  // Server: angleRad = (side<0) ? a*pi/180 : (180-a)*pi/180
+  //   vx     = velocity*cos(angleRad)
+  //   vyUp   = velocity*sin(angleRad)
+  // For side<0: cos(a)=vx/v, sin(a)=vyUp/v → a = atan2(vyUp, vx)
+  // For side>=0: vx = v*cos(180-a) = -v*cos(a), so cos(a) = -vx/v;
+  //              vyUp = v*sin(180-a) = v*sin(a), so sin(a) = vyUp/v → a = atan2(vyUp, -vx)
+  let angleDeg;
+  if (side < 0) {
+    angleDeg = Math.atan2(vyUp, vx) * 180 / Math.PI;
+  } else {
+    angleDeg = Math.atan2(vyUp, -vx) * 180 / Math.PI;
+  }
+
+  // Clamp to launchable range and add medium-difficulty jitter.
+  angleDeg = Math.max(15, Math.min(165, angleDeg));
+  const angleJitter = (Math.random() - 0.5) * 16;   // ±8°
+  const speedJitter = 1 + (Math.random() - 0.5) * 0.18;   // ±9%
+  const finalAngle = Math.max(5, Math.min(175, angleDeg + angleJitter));
+  const maxV = Math.min(999, match.settings.maxVelocity || 200);
+  const finalVel = Math.max(20, Math.min(maxV, speed * speedJitter));
+
+  return { angle: Math.round(finalAngle), velocity: Math.round(finalVel) };
+}
+
+function isCpuSlot(slotIdx) {
+  return match.settings.gameMode === 'coop' && slotIdx >= 2;
+}
+
+function scheduleCpuTurnIfNeeded() {
+  if (match.state !== 'playing') return;
+  if (match.settings.gameMode !== 'coop') return;
+  const cpuIdx = match.currentPlayer - 1;
+  if (!isCpuSlot(cpuIdx)) return;
+
+  // "Thinking" delay so the human sees who's shooting before the banana flies.
+  const thinkMs = 1100 + Math.floor(Math.random() * 900);
+  broadcast({ type: 'cpuThinking', cpu: match.currentPlayer });
+
+  scheduleGameplayAction(() => {
+    if (match.state !== 'playing') return;
+    if (match.currentPlayer !== cpuIdx + 1) return;
+    if (match.banana || match.bananas.length > 0 || match.fireInProgress) return;
+
+    const shot = pickCpuShot(cpuIdx);
+    if (!shot) return;
+
+    // Mirror the relevant parts of handleFire so the CPU shot follows the
+    // exact same physics path as a human shot.
+    match.fireInProgress = true;
+    match.turnNumber++;
+    expireTurrets();
+    startBanana(cpuIdx, shot.angle, shot.velocity);
+  }, thinkMs);
+}
+
 // ─── Physics constants ───────────────────────────────────────────────────────
 const EARTH_GRAVITY = 9.8;
 const GRAVITY_SCALE = 3;
@@ -441,9 +577,14 @@ function getLobbyPlayerNames() {
 
 function getPlayerColorsView(count = getActivePlayerCount()) {
   const isHotseat = match.settings.gameMode === 'hotseat';
+  const isCoop = match.settings.gameMode === 'coop';
   return Array.from({ length: count }, (_, i) => {
-    if (isHotseat && i === 1) {
+    if ((isHotseat || isCoop) && i === 1) {
       return sanitizePlayerColor(match.settings.player2Color, getDefaultPlayerColor(1));
+    }
+    if (isCoop && i >= 2) {
+      // Distinct CPU colors so they read as the enemy team.
+      return i === 2 ? '#FF4D4D' : '#FF8855';
     }
     const color = match.players[i]?.color;
     return sanitizePlayerColor(color, getDefaultPlayerColor(i));
@@ -473,6 +614,7 @@ function getActivePlayerCount() {
     return Math.min(match.rosterSize, getControlledPlayerCount(mode));
   }
   if (mode === 'hotseat') return getControlledPlayerCount(mode);
+  if (mode === 'coop') return 4; // 2 humans + 2 CPUs
   if (isSoloTurnMode(mode)) return 1;
   if (mode === 'team' || mode === 'koth') {
     const claimedPlayers = match.players.filter(p => p).length;
@@ -488,10 +630,19 @@ function getRoundGorillaCount(mode = match.settings.gameMode) {
 function getPlayerNamesView() {
   const count = getActivePlayerCount();
   const isHotseat = match.settings.gameMode === 'hotseat';
+  const isCoop = match.settings.gameMode === 'coop';
   return Array.from({ length: count }, (_, i) => {
     if (isHotseat && i === 1) {
       const name = match.settings.player2Name;
       return (typeof name === 'string' && name.trim()) ? name.trim().substring(0, 20) : 'Player 2';
+    }
+    if (isCoop) {
+      if (i === 0) return match.players[0]?.name || 'Player 1';
+      if (i === 1) {
+        const name = match.settings.player2Name;
+        return (typeof name === 'string' && name.trim()) ? name.trim().substring(0, 20) : 'Player 2';
+      }
+      return i === 2 ? 'CPU 1' : 'CPU 2';
     }
     return match.players[i]?.name || `Player ${i + 1}`;
   });
@@ -502,11 +653,17 @@ function getPlayerTeamsView(mode = match.settings.gameMode) {
   if (mode === 'team') {
     return Array.from({ length: count }, (_, i) => i % 2);
   }
+  if (mode === 'coop') {
+    // Slots 0,1 = humans (team 0). Slots 2,3 = CPUs (team 1).
+    return Array.from({ length: count }, (_, i) => (i < 2 ? 0 : 1));
+  }
   return Array.from({ length: count }, (_, i) => i);
 }
 
 function getTeamIndexForSlot(slotIdx, mode = match.settings.gameMode) {
-  return mode === 'team' ? slotIdx % 2 : slotIdx;
+  if (mode === 'team') return slotIdx % 2;
+  if (mode === 'coop') return slotIdx < 2 ? 0 : 1;
+  return slotIdx;
 }
 
 function getTeamLabel(teamIdx) {
@@ -1117,7 +1274,12 @@ function newRound() {
 
   match.buildings = generateTerrain(match.citySeed, match.settings.mapSize, match.roundBiome);
   const rng = mulberry32(match.citySeed + 12345);
-  match.gorillas = placeGorillas(match.buildings, rng, getRoundGorillaCount(mode));
+  if (mode === 'coop') {
+    // Humans (slots 0,1) on the LEFT half, CPUs (slots 2,3) on the RIGHT half.
+    match.gorillas = placeCoopGorillas(match.buildings, rng);
+  } else {
+    match.gorillas = placeGorillas(match.buildings, rng, getRoundGorillaCount(mode));
+  }
 
   // Calculate building mass for collapse detection
   match.buildingMass = match.buildings.map(b => b.w * (mapCfg.h - b.y));
@@ -1166,6 +1328,9 @@ function newRound() {
     } else if (mode === 'team' || mode === 'koth') {
       const activeCount = Math.max(1, getActivePlayerCount());
       match.currentPlayer = ((match.roundNumber - 1) % activeCount) + 1;
+    } else if (mode === 'coop') {
+      // Always start with a human (slot 0 or 1) so the CPU doesn't open.
+      match.currentPlayer = (match.roundNumber % 2 === 1) ? 1 : 2;
     } else {
       match.currentPlayer = (match.roundNumber % 2 === 1) ? 1 : 2;
     }
@@ -1318,7 +1483,7 @@ function switchTurn() {
 
   if (isSoloTurnMode(mode)) {
     match.currentPlayer = 1;
-  } else if (mode === 'team' || mode === 'koth') {
+  } else if (mode === 'team' || mode === 'koth' || mode === 'coop') {
     const activeCount = getActivePlayerCount();
     match.currentPlayer = (match.currentPlayer % activeCount) + 1;
   } else {
@@ -1332,6 +1497,9 @@ function switchTurn() {
   broadcast(turnMsg);
 
   startTurnTimer();
+
+  // Co-op vs CPU: if the new turn belongs to a CPU slot, schedule its shot.
+  scheduleCpuTurnIfNeeded();
 }
 
 // ─── Sun punishment attack ───────────────────────────────────────────────────
@@ -2620,6 +2788,9 @@ function maybeStartMatchFromWaiting() {
   if (match.settings.gameMode === 'hotseat') {
     // Hot seat: one socket controls multiple gorillas locally.
     match.rosterSize = getControlledPlayerCount();
+  } else if (match.settings.gameMode === 'coop') {
+    // Co-op: one socket controls 2 humans + 2 CPUs join the field.
+    match.rosterSize = 4;
   } else {
     match.rosterSize = isSoloTurnMode() ? 1 : Math.min(supportedPlayers, connectedCount);
   }
@@ -2708,6 +2879,12 @@ function handleFire(ws, msg) {
   let playerIdx;
   if (match.settings.gameMode === 'hotseat') {
     if (wsSlot !== 0) return;
+    playerIdx = match.currentPlayer - 1;
+  } else if (match.settings.gameMode === 'coop') {
+    // Slots 0,1 are local humans (one socket = host). Slots 2,3 are CPUs and
+    // are never fired via a socket — the server schedules their shots.
+    if (wsSlot !== 0) return;
+    if (match.currentPlayer < 1 || match.currentPlayer > 2) return;
     playerIdx = match.currentPlayer - 1;
   } else {
     if (wsSlot + 1 !== match.currentPlayer) return;
@@ -3069,6 +3246,9 @@ function handleRematch(ws) {
   match.rosterSize = isSoloTurnMode() ? 1 : Math.min(getSupportedPlayerCount(), connectedCount);
   if (getModeConfig().key === 'hotseat' || match.settings.gameMode === 'hotseat') {
     match.rosterSize = getControlledPlayerCount();
+  }
+  if (match.settings.gameMode === 'coop') {
+    match.rosterSize = 4;
   }
   match.scores = [0, 0, 0, 0];
   match.stats = match.stats.map(() => ({ shots: 0, hits: 0, nearMisses: 0, longestShot: 0, fastestBanana: 0 }));
