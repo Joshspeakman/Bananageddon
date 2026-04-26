@@ -610,11 +610,13 @@ function getHostPlayerNumber() {
 
 function getActivePlayerCount() {
   const mode = match.settings.gameMode;
+  // Co-op vs CPU always has 4 slots (2 humans + 2 CPUs), regardless of rosterSize
+  // (which tracks the controlledPlayers cap of 2 for the local-host pattern).
+  if (mode === 'coop') return 4;
   if (match.rosterSize > 0 && match.state !== 'waiting') {
     return Math.min(match.rosterSize, getControlledPlayerCount(mode));
   }
   if (mode === 'hotseat') return getControlledPlayerCount(mode);
-  if (mode === 'coop') return 4; // 2 humans + 2 CPUs
   if (isSoloTurnMode(mode)) return 1;
   if (mode === 'team' || mode === 'koth') {
     const claimedPlayers = match.players.filter(p => p).length;
