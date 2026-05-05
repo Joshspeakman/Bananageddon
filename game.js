@@ -710,7 +710,7 @@
 
   // Building collapse tracking
   let collapsedBuildings = new Set();
-  const DEFAULT_LOCAL_AUDIO_VOLUME = 100;
+  const DEFAULT_LOCAL_AUDIO_VOLUME = 70;
   const PLAYER_NAME_INPUT_IDS = ['player-name', 'pause-player-name'];
   const MUSIC_TOGGLE_CONTROL_IDS = ['music-select', 'pause-music-select'];
   const SFX_TOGGLE_CONTROL_IDS = ['pause-sfx-select'];
@@ -1000,6 +1000,7 @@
   const activeHtmlSfxInstances = new Set();
   const BG_MUSIC_BASE_VOLUME = 0.3;
   const VICTORY_MUSIC_BASE_VOLUME = 0.3;
+  const EXPLOSION_SFX_BASE_VOLUME = 0.357;
 
   function ensureAudio() {
     if (!audioCtx) {
@@ -1113,7 +1114,7 @@
     return null;
   }
 
-  const explosionSfx = createSfx('freesound_community-hq-explosion-6288.mp3', 0.42);
+  const explosionSfx = createSfx('freesound_community-hq-explosion-6288.mp3', EXPLOSION_SFX_BASE_VOLUME);
   const turretFireSfx = createSfx('freesound_community-clean-machine-gun-burst-98224.mp3', 0.5);
   const turretLockSfx = createSfx('freesound_community-beep-warning-6387.mp3', 0.48);
   const panicSfx = createSfx('u_cs6o615ob2-mono-505080.mp3', 0.54);
