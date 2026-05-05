@@ -2,7 +2,7 @@ const { spawnSync } = require('child_process');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const FILES = ['game.js', 'background.js', 'lighting.js', 'particles.js', 'net.js', 'shared.js'];
+const FILES = ['game.js', 'background.js', 'lighting.js', 'particles.js', 'net.js', 'shared.js', 'server.js', 'electron/main.js'];
 
 let failures = 0;
 

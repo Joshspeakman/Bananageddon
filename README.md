@@ -41,6 +41,24 @@ PORT=3012 npm start
 
 The server prints `localhost` and LAN URLs. Open one of those URLs in a browser and share it with the other players on your network.
 
+## Desktop installers
+
+Bananageddon also ships as a standalone desktop app via Electron. The launcher
+spawns the bundled server on a free port and opens it inside its own window —
+LAN play still works (other devices can still hit `http://<host-lan-ip>:<port>`).
+
+```bash
+npm install                # one-time, pulls electron + electron-builder
+npm run electron           # dev: launches the game in a window
+npm run dist:linux         # builds AppImage + .deb in dist/
+npm run dist:win           # builds NSIS installer + portable .exe
+npm run dist:mac           # builds .dmg (unsigned cross-build from Linux)
+npm run dist:all           # all three at once
+```
+
+Drop a square `assets/icon.png` (1024×1024 recommended) before building.
+See [assets/README.md](assets/README.md) for icon details.
+
 ## Lobby Rules
 
 - The first player is the host.

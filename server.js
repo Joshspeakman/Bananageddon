@@ -3654,16 +3654,25 @@ function handleDisconnect(ws) {
 
 // ─── Start server ────────────────────────────────────────────────────────────
 httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`Bananageddon server listening on port ${PORT}`);
+  // Resolve the actual bound port (PORT=0 lets the OS pick a free one, used
+  // by the Electron launcher to avoid conflicts with anything already on 3000).
+  const boundPort = httpServer.address().port;
+  console.log(`Bananageddon server listening on port ${boundPort}`);
   console.log('Share one of these with other players:');
 
   const interfaces = os.networkInterfaces();
   for (const [, addrs] of Object.entries(interfaces)) {
     for (const addr of addrs) {
       if (addr.family === 'IPv4' && !addr.internal) {
-        console.log(`  http://${addr.address}:${PORT}`);
+        console.log(`  http://${addr.address}:${boundPort}`);
       }
     }
   }
-  console.log(`  http://localhost:${PORT}`);
+  console.log(`  http://localhost:${boundPort}`);
+
+  // IPC handshake for the Electron launcher: it forks server.js and waits for
+  // this message to know which port to point its BrowserWindow at.
+  if (typeof process.send === 'function') {
+    try { process.send({ type: 'listening', port: boundPort }); } catch (_) { /* not forked */ }
+  }
 });
