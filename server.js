@@ -193,9 +193,21 @@ function placeCoopGorillas(buildings, rng) {
 }
 
 // ─── CPU AI (co-op mode) ─────────────────────────────────────────────────────
-// Picks a target (one of the two human gorillas) and computes an angle/velocity
-// to land near it using projectile motion. "Medium" difficulty adds random
-// jitter so it occasionally misses.
+// Picks one of the two human gorillas as a target and computes a HIGH-ARC
+// shot that lands near it. Approach: parametrize by launch angle θ (biased to
+// medium-high arcs, 55–75°) and solve closed-form for the launch velocity that
+// lands at the target under gravity + constant wind. Then add randomized
+// angle/velocity jitter so the AI doesn't have a 100% hit rate.
+//
+// Math (in shooter's "throwing-side" forward frame; θ from horizontal forward).
+// Wind in the real physics is an *acceleration* (vx += wind*0.5*DT), not a
+// velocity offset — so:
+//   forward(t) = v cos θ · t + 0.5 · a_w · t²
+//   up(t)      = v sin θ · t − 0.5 · g · t²
+// where a_w = −side · wind · 0.5 is the forward-component wind acceleration.
+// Setting forward(t)=Df and up(t)=h, dividing gives an equation linear in t²:
+//   t² = 2 (Df · tan θ − h) / (g + a_w · tan θ)
+// Then v = (h/t + 0.5 · g · t) / sin θ.
 function pickCpuShot(cpuIdx) {
   const shooter = match.gorillas[cpuIdx];
   if (!shooter) return null;
@@ -210,47 +222,82 @@ function pickCpuShot(cpuIdx) {
 
   const dx = tx - sx;
   const dy = ty - sy;
-  const horiz = Math.abs(dx) || 1;
+  const Df = Math.max(1, Math.abs(dx));
+  const h = -dy;   // target height above shooter (down is +y in screen space)
 
   const gravity = BASE_GRAVITY * (Number(match.settings.gravityMultiplier) || 1);
   const wind = Number(match.wind) || 0;
+  const side = getThrowSide(cpuIdx);   // -1 fires right, +1 fires left
+  // Forward-axis wind acceleration. Forward = −side in world; physics tick
+  // applies vx += wind · 0.5 · dt, so a_w = −side · wind · 0.5.
+  const a_w = -side * wind * 0.5;
 
-  // Choose a flight time appropriate to the horizontal distance, then solve
-  // for the launch velocity that lands at the target at that time:
-  //   x: dx = (vxWorld + wind) * t      → vxWorld = dx/t - wind
-  //   y (screen, down=+): dy = vyScreen*t + 0.5*g*t^2
-  //                       → vyScreen = dy/t - 0.5*g*t
-  //   server uses vyScreen = -velocity*sin(angleRad), so define vyUp = -vyScreen
-  //                       → vyUp = 0.5*g*t - dy/t
-  const t = Math.max(1.2, Math.min(3.5, horiz / 120 + 1.4));
-  let vx = dx / t - wind;
-  let vyUp = 0.5 * gravity * t - dy / t; // = 0.5*g*t - dy/t
+  const maxV = Math.min(999, match.settings.maxVelocity || 200);
 
-  // Speed magnitude.
-  const speed = Math.hypot(vx, vyUp);
-  if (!isFinite(speed) || speed <= 0) return null;
-
-  const side = getThrowSide(cpuIdx);   // -1 = facing right (left side of map), 1 = facing left
-  // Server: angleRad = (side<0) ? a*pi/180 : (180-a)*pi/180
-  //   vx     = velocity*cos(angleRad)
-  //   vyUp   = velocity*sin(angleRad)
-  // For side<0: cos(a)=vx/v, sin(a)=vyUp/v → a = atan2(vyUp, vx)
-  // For side>=0: vx = v*cos(180-a) = -v*cos(a), so cos(a) = -vx/v;
-  //              vyUp = v*sin(180-a) = v*sin(a), so sin(a) = vyUp/v → a = atan2(vyUp, -vx)
-  let angleDeg;
-  if (side < 0) {
-    angleDeg = Math.atan2(vyUp, vx) * 180 / Math.PI;
-  } else {
-    angleDeg = Math.atan2(vyUp, -vx) * 180 / Math.PI;
+  // Server's angle convention: for both sides, `angle` ∈ [0, 180] where
+  //   0  = horizontal forward
+  //   90 = straight up
+  // So the θ we pick (in degrees) maps directly to the `angle` field.
+  function solveVelocityForAngle(thetaDeg) {
+    const theta = thetaDeg * Math.PI / 180;
+    const sinT = Math.sin(theta);
+    const tanT = Math.tan(theta);
+    if (sinT < 1e-3) return null;
+    const denom = gravity + a_w * tanT;
+    const numer = 2 * (Df * tanT - h);
+    if (denom <= 0 || numer <= 0) return null;
+    const tSq = numer / denom;
+    const t = Math.sqrt(tSq);
+    if (!isFinite(t) || t <= 0) return null;
+    const v = (h / t + 0.5 * gravity * t) / sinT;
+    if (!isFinite(v) || v <= 0) return null;
+    return v;
   }
 
-  // Clamp to launchable range and add medium-difficulty jitter.
-  angleDeg = Math.max(15, Math.min(165, angleDeg));
-  const angleJitter = (Math.random() - 0.5) * 16;   // ±8°
-  const speedJitter = 1 + (Math.random() - 0.5) * 0.18;   // ±9%
-  const finalAngle = Math.max(5, Math.min(175, angleDeg + angleJitter));
-  const maxV = Math.min(999, match.settings.maxVelocity || 200);
-  const finalVel = Math.max(20, Math.min(maxV, speed * speedJitter));
+  // Try a randomized high-arc preference first; fall back to other angles
+  // if the resulting velocity is out of range (target very near or very far).
+  const preferred = 55 + Math.random() * 20;   // 55–75°
+  const candidates = [
+    preferred,
+    preferred + (Math.random() - 0.5) * 10,
+    65, 60, 70, 50, 75, 45, 80, 40, 35,
+  ];
+
+  let chosenAngle = null;
+  let chosenVel = null;
+  for (const a of candidates) {
+    const v = solveVelocityForAngle(a);
+    // Leave headroom under maxV so jitter doesn't push us against the cap.
+    if (v != null && v >= 25 && v <= maxV * 0.9) {
+      chosenAngle = a;
+      chosenVel = v;
+      break;
+    }
+  }
+  if (chosenAngle == null) {
+    // Last-resort: 45° lobs and clamp into range.
+    const v = solveVelocityForAngle(45);
+    if (v == null) return null;
+    chosenAngle = 45;
+    chosenVel = Math.max(25, Math.min(maxV, v));
+  }
+
+  // ── Medium-difficulty inaccuracy ────────────────────────────────────────
+  // Always-on jitter so direct hits aren't guaranteed.
+  const angleJitter = (Math.random() - 0.5) * 14;        // ±7°
+  const velJitter = 1 + (Math.random() - 0.5) * 0.22;    // ±11%
+  // ~25% of shots get an extra "wild" deviation (clearly missed) — keeps
+  // matches dramatic instead of one-shot perfect.
+  const wildMiss = Math.random() < 0.25;
+  const extraAngle = wildMiss ? (Math.random() - 0.5) * 18 : 0;
+  const extraVel = wildMiss ? (1 + (Math.random() - 0.5) * 0.20) : 1;
+
+  let finalAngle = chosenAngle + angleJitter + extraAngle;
+  let finalVel = chosenVel * velJitter * extraVel;
+
+  // Keep shots arcing forward — never flat or backward.
+  finalAngle = Math.max(25, Math.min(85, finalAngle));
+  finalVel = Math.max(30, Math.min(maxV, finalVel));
 
   return { angle: Math.round(finalAngle), velocity: Math.round(finalVel) };
 }
