@@ -1,2 +1,5 @@
 node_modules/
 *.bak
+.claude/
+.codex
+AI_REFERENCE.md
