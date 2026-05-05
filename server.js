@@ -2358,7 +2358,7 @@ function getFallbackWinnerForOwnGoal(shooterIdx) {
 
   if (isSoloTurnMode(mode)) return null;
 
-  if (mode === 'team') {
+  if (mode === 'team' || mode === 'coop') {
     const opposingTeam = getTeamIndexForSlot(shooterIdx) === 0 ? 1 : 0;
     for (let i = 0; i < activeCount; i++) {
       if (getTeamIndexForSlot(i) === opposingTeam) return i;
@@ -2379,7 +2379,8 @@ function getFallbackWinnerForOwnGoal(shooterIdx) {
 
 function isFriendlyHit(shooterIdx, hitGorillaIdx) {
   if (hitGorillaIdx === shooterIdx) return true;
-  if (match.settings.gameMode !== 'team') return false;
+  const mode = match.settings.gameMode;
+  if (mode !== 'team' && mode !== 'coop') return false;
   if (hitGorillaIdx >= getActivePlayerCount()) return false;
   return getTeamIndexForSlot(shooterIdx) === getTeamIndexForSlot(hitGorillaIdx);
 }
@@ -2391,7 +2392,7 @@ function getMatchWinState(scoringIdx) {
     return { matchOver: true, winnerIdx: scoringIdx, winnerLabel: getWinnerLabel(scoringIdx) };
   }
 
-  if (mode === 'team') {
+  if (mode === 'team' || mode === 'coop') {
     const teamScores = getTeamScores();
     const teamIdx = getTeamIndexForSlot(scoringIdx);
     const teamScore = teamScores[teamIdx];
