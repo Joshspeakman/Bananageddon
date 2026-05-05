@@ -66,8 +66,17 @@
   const DEFAULT_MAP_CONFIG = MAP_SIZES.normal || { w: 640, h: 480 };
 
   // ─── Active logical dimensions ─────────────────────────────────────────────
+  // LOGICAL_W/H = authoritative world size from the server. All physics, gorilla
+  // positions, building coords, and banana paths live in this space.
+  // RENDER_H   = visible canvas height; ≥ LOGICAL_H. On screens whose aspect
+  //              ratio is taller than the world, we extend the canvas upward so
+  //              the playfield fills the viewport (no horizontal black bars).
+  // SKY_OFFSET = RENDER_H − LOGICAL_H. World is drawn shifted down by this much
+  //              and the extra rows above are decorative sky.
   let LOGICAL_W = DEFAULT_MAP_CONFIG.w;
   let LOGICAL_H = DEFAULT_MAP_CONFIG.h;
+  let RENDER_H  = LOGICAL_H;
+  let SKY_OFFSET = 0;
   const GORILLA_W = 28;
   const GORILLA_H = 28;
   let SUN_X = LOGICAL_W / 2;
@@ -245,14 +254,27 @@
   let backdropCtx = backdropCanvas.getContext('2d');
   backdropCtx.imageSmoothingEnabled = false;
 
+  function computeRenderH(worldW, worldH) {
+    // Extend canvas height so its aspect matches (or exceeds) the viewport's,
+    // turning what would be horizontal black bars into extra sky above the
+    // playfield. Server world stays worldW × worldH; we only stretch upward.
+    const vw = Math.max(1, window.innerWidth);
+    const vh = Math.max(1, window.innerHeight);
+    const wantedH = Math.ceil(worldW * vh / vw);
+    return Math.max(worldH, wantedH);
+  }
+
   function setLogicalSize(w, h) {
     LOGICAL_W = w;
     LOGICAL_H = h;
+    RENDER_H  = computeRenderH(w, h);
+    SKY_OFFSET = RENDER_H - LOGICAL_H;
     SUN_X = LOGICAL_W / 2;
     SUN_Y = 68;
     canvas.width = w;
-    canvas.height = h;
+    canvas.height = RENDER_H;
     ctx.imageSmoothingEnabled = false;
+    // Terrain & backdrop buffers remain in world space (LOGICAL_W × LOGICAL_H).
     terrainCanvas.width = w;
     terrainCanvas.height = h;
     terrainCtx = terrainCanvas.getContext('2d');
@@ -261,9 +283,12 @@
     backdropCanvas.height = h;
     backdropCtx = backdropCanvas.getContext('2d');
     backdropCtx.imageSmoothingEnabled = false;
-    Lighting.resize(w, h);
+    // Sky-aware modules render in canvas-pixel space → use RENDER_H so their
+    // overlays/gradients fill the entire visible canvas (incl. extended sky).
+    Lighting.resize(w, RENDER_H);
+    Background.resize(w, RENDER_H);
+    // Particles live in world coords (rain falls onto terrain) → world height.
     Particles.resize(w, h);
-    Background.resize(w, h);
     resizeCanvas();
   }
 
@@ -280,11 +305,24 @@
   function resizeCanvas() {
     const container = document.getElementById('game-container');
     if (!container) return;
+
+    // Recompute extended sky on viewport-shape change so the playfield keeps
+    // filling the viewport vertically (no top/bottom black bars).
+    const newRenderH = computeRenderH(LOGICAL_W, LOGICAL_H);
+    if (newRenderH !== RENDER_H) {
+      RENDER_H  = newRenderH;
+      SKY_OFFSET = RENDER_H - LOGICAL_H;
+      canvas.height = RENDER_H;
+      ctx.imageSmoothingEnabled = false;
+      Lighting.resize(LOGICAL_W, RENDER_H);
+      Background.resize(LOGICAL_W, RENDER_H);
+    }
+
     const cw = Math.max(1, container.clientWidth);
     const containerHeight = Math.max(1, container.clientHeight);
-    const scale = Math.min(cw / LOGICAL_W, containerHeight / LOGICAL_H);
+    const scale = Math.min(cw / LOGICAL_W, containerHeight / RENDER_H);
     const renderWidth = Math.max(1, Math.floor(LOGICAL_W * scale));
-    const renderHeight = Math.max(1, Math.floor(LOGICAL_H * scale));
+    const renderHeight = Math.max(1, Math.floor(RENDER_H * scale));
     const offsetX = Math.floor((cw - renderWidth) / 2);
     const offsetY = Math.floor((containerHeight - renderHeight) / 2);
     container.style.setProperty('--playfield-left', offsetX + 'px');
@@ -1777,10 +1815,13 @@
     if (roundTimeOfDay === 'night' || roundTimeOfDay === 'dawn' || roundTimeOfDay === 'dusk') {
       const count = roundTimeOfDay === 'night' ? 120 :
                     roundTimeOfDay === 'dusk' ? 40 : 20;
+      // Stars are stored in canvas-pixel space (drawn outside the world
+      // translate), so they fill the entire visible sky including the
+      // extended region above the world.
       for (let i = 0; i < count; i++) {
         stars.push({
           x: Math.random() * LOGICAL_W,
-          y: Math.random() * (LOGICAL_H * 0.5),
+          y: Math.random() * ((SKY_OFFSET + LOGICAL_H * 0.5)),
           brightness: 0.3 + Math.random() * 0.7,
           twinkleSpeed: 1 + Math.random() * 3,
           phase: Math.random() * Math.PI * 2,
@@ -3400,41 +3441,48 @@
         updateCam(dt);
       }
 
+      // Sky is drawn in canvas-pixel space so it fills the full visible canvas
+      // (including the extended region above the world on tall viewports).
+      drawSky();
+
       ctx.save();
+      // Shift world rendering down by SKY_OFFSET so canvas y=0..SKY_OFFSET is
+      // pure sky and y=SKY_OFFSET..RENDER_H is the original world rect.
+      if (SKY_OFFSET) ctx.translate(0, SKY_OFFSET);
       // Cinematic camera: pivot scale around cam center
       if (cam.zoom !== 1 || cam.phase !== 'idle') {
+        ctx.save();
         ctx.translate(LOGICAL_W / 2, LOGICAL_H / 2);
         ctx.scale(cam.zoom, cam.zoom);
         ctx.translate(-cam.x, -cam.y);
+      } else {
+        ctx.save();
       }
       // Shake applied in screen space (divide to stay constant-magnitude under zoom)
       ctx.translate(shakeOffset.x / cam.zoom, shakeOffset.y / cam.zoom);
 
-      // 1. Sky
-      drawSky();
-
-      // 2. Backdrop content that should not show through standing building columns.
+      // 1. Backdrop content that should not show through standing building columns.
       drawMaskedBackdrop();
 
-      // 3. Sun/Moon
+      // 2. Sun/Moon
       drawSun();
 
-      // 4. Terrain & buildings
+      // 3. Terrain & buildings
       drawBuildings();
 
-      // 5. Trails
+      // 4. Trails
       drawTrail(previousTrail, 0.25);
       drawTrail(bananaTrail, 0.5);
 
-      // 6. Gorillas
+      // 5. Gorillas
       for (let gi = 0; gi < gorillas.length; gi++) {
         drawGorilla(gorillas[gi].x, gorillas[gi].y, gorillaAnim[gi], gi);
       }
 
-      // 6.25 Golden Gorilla (rendered on top of regular gorillas)
+      // 5.25 Golden Gorilla (rendered on top of regular gorillas)
       drawGoldenGorilla();
 
-      // 6.5 Turrets — rendered before bananas so a banana in front occludes
+      // 5.5 Turrets — rendered before bananas so a banana in front occludes
       for (const t of turrets) {
         // Decay barrel kick over real time so recoil feels snappy regardless of cinematic slowdown
         if (t.barrelKick) t.barrelKick = Math.max(0, t.barrelKick - dt * 30);
@@ -3442,44 +3490,49 @@
       }
       drawTurretTracers(worldDt);
 
-      // 7. Banana
+      // 6. Banana
       if (showBanana && banana) {
         drawBanana(banana.x, banana.y, banana.frame, activeBananaType);
       }
 
-      // 8. Cluster bananas
+      // 7. Cluster bananas
       for (const cb of clusterBananas) {
         drawBanana(cb.x, cb.y, Math.floor(cb.x / 10) % 4, 'cluster');
       }
 
-      // 9. Explosions
+      // 8. Explosions
       drawExplosions(worldDt);
 
-      // 10. Napalm
+      // 9. Napalm
       drawNapalmPatches();
 
-      // 11. Death chunks
+      // 10. Death chunks
       updateDeathChunks(worldDt);
       drawDeathChunks();
 
-      // 12. Particles in front (rain, snow, sparks, etc.)
+      // 11. Particles in front (rain, snow, sparks, etc.)
       Particles.renderFront(ctx);
 
-      ctx.restore();
+      ctx.restore(); // end camera transform
 
-      // 13. Lighting overlay (ambient tint, lights, flashes)
-      Lighting.render(ctx);
-
-      // 14. Shadows
+      // 12. Shadows — drawn in world coords (still under SKY_OFFSET translate)
       Lighting.drawShadows(ctx, buildings, collapsedBuildings, gorillas, gorillaVisible, roundTimeOfDay, GORILLA_W, GORILLA_H, LOGICAL_H);
 
-      // 15. Slow-mo overlay
+      ctx.restore(); // end SKY_OFFSET translate
+
+      // 13. Lighting overlay (ambient tint, lights, flashes) — canvas-pixel
+      //     space; covers the full extended canvas via Lighting's RENDER_H.
+      Lighting.render(ctx);
+
+      // 14. Slow-mo overlay
       if (slowmoActive) {
         ctx.fillStyle = 'rgba(255, 255, 200, 0.08)';
-        ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
     } else if (gameState === 'title' || gameState === 'setup' || gameState === 'waiting' || gameState === 'matchOver') {
       drawSky();
+      ctx.save();
+      if (SKY_OFFSET) ctx.translate(0, SKY_OFFSET);
       drawSun();
       if (buildings.length > 0) {
         drawBuildings();
@@ -3487,6 +3540,7 @@
           drawGorilla(gorillas[gi].x, gorillas[gi].y, 0, gi);
         }
       }
+      ctx.restore();
     }
 
     } catch (e) {
@@ -5401,8 +5455,9 @@
   });
 
   Net.on('meteor', (msg) => {
-    // Flash warning at the impact site before explosion arrives
-    Lighting.addExplosionLight(msg.x, 0, msg.radius * 2);
+    // Flash warning at the impact site before explosion arrives.
+    // Lighting lives in canvas-pixel space, so shift y by SKY_OFFSET.
+    Lighting.addExplosionLight(msg.x, 0 + SKY_OFFSET, msg.radius * 2);
     Particles.burstSparks(msg.x, 0, 12);
     startShake();
   });
@@ -5618,12 +5673,13 @@
       progress: 0,
     });
 
-    // Visual effects for explosion
-    Lighting.addExplosionLight(msg.x, msg.y, msg.radius);
+    // Visual effects for explosion.
+    // Lighting lives in canvas-pixel space, so shift world-y by SKY_OFFSET.
+    Lighting.addExplosionLight(msg.x, msg.y + SKY_OFFSET, msg.radius);
     Lighting.triggerExplosionFlash(false);
     Particles.burstSparks(msg.x, msg.y, 20);
     Particles.burstSmoke(msg.x, msg.y, 15);
-    Lighting.addBananaGlow(msg.x, msg.y);
+    Lighting.addBananaGlow(msg.x, msg.y + SKY_OFFSET);
   });
 
   Net.on('gorillaHit', (msg) => {
