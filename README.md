@@ -1,5 +1,7 @@
 # Bananageddon
 
+[![Buy me a Continue on Ko-fi](https://img.shields.io/badge/Buy_me_a_Continue_%7C_%245-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/speakerjosh)
+
 Browser-based rooftop banana artillery inspired by QBasic Gorillas. The server owns match state, physics, scoring, lobby rules, and reconnect windows; the client handles rendering, audio, HUD, and input.
 
 ## Visual Refresh
@@ -135,8 +137,8 @@ Current automated coverage includes:
 - Internet play is possible only if you handle networking yourself, such as port forwarding or a reverse proxy.
 - Reconnect tokens are origin-checked server-side, but real transport security still requires HTTPS/WSS if you expose the game outside a trusted LAN.
 
-## Support
+## Insert Coin
 
-If you get some use out of this, you can buy me a coffee on Ko-fi.
+If this saved you some time (or saved you from buying something twice), you can buy me a Continue on Ko-fi. It's $5 and it keeps me building stuff like this.
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/speakerjosh)
+[![Buy me a Continue on Ko-fi](https://img.shields.io/badge/Buy_me_a_Continue_%7C_%245-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/speakerjosh)
