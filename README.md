@@ -134,3 +134,9 @@ Current automated coverage includes:
 - Intended for desktop browsers.
 - Internet play is possible only if you handle networking yourself, such as port forwarding or a reverse proxy.
 - Reconnect tokens are origin-checked server-side, but real transport security still requires HTTPS/WSS if you expose the game outside a trusted LAN.
+
+## Support
+
+If you get some use out of this, you can buy me a coffee on Ko-fi.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/speakerjosh)
